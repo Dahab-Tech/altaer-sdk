@@ -1,6 +1,6 @@
 # @dahab-tech/altaer-sdk
 
-[![📖 Read the docs](https://img.shields.io/badge/%F0%9F%93%96_Read_the_docs-hub.altaer.app-FFCE0A?labelColor=1C5E83&style=for-the-badge)](https://hub.altaer.app/docs/api) &nbsp; [![npm](https://img.shields.io/npm/v/@dahab-tech/altaer-sdk?logo=npm&label=npm&color=cb3837)](https://www.npmjs.com/package/@dahab-tech/altaer-sdk) [![License MIT](https://img.shields.io/npm/l/@dahab-tech/altaer-sdk)](./LICENSE) [![Node](https://img.shields.io/node/v/@dahab-tech/altaer-sdk?logo=node.js)](https://nodejs.org)
+[![Docs](https://img.shields.io/badge/%F0%9F%93%96_Docs-hub.altaer.app%2Fdocs%2Fapi-FFCE0A?labelColor=1C5E83)](https://hub.altaer.app/docs/api) [![Hub](https://img.shields.io/badge/%F0%9F%9A%9A_Hub-hub.altaer.app-1C5E83?labelColor=FFCE0A)](https://hub.altaer.app) [![npm](https://img.shields.io/npm/v/@dahab-tech/altaer-sdk?logo=npm&label=npm&color=cb3837)](https://www.npmjs.com/package/@dahab-tech/altaer-sdk) [![License MIT](https://img.shields.io/npm/l/@dahab-tech/altaer-sdk)](./LICENSE) [![Node](https://img.shields.io/node/v/@dahab-tech/altaer-sdk?logo=node.js)](https://nodejs.org)
 
 Dispatch deliveries on [Altaer](https://altaer.app)'s driver network from your own system: create orders, stream live driver GPS, receive webhooks, reconcile your balance. One typed client, no hand-rolled HTTP.
 
