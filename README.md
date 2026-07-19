@@ -1,10 +1,12 @@
 # @dahab-tech/altaer-sdk
 
+[![📖 Read the docs](https://img.shields.io/badge/%F0%9F%93%96_Read_the_docs-hub.altaer.app-FFCE0A?labelColor=1C5E83&style=for-the-badge)](https://hub.altaer.app/docs/api) &nbsp; [![npm](https://img.shields.io/npm/v/@dahab-tech/altaer-sdk?logo=npm&label=npm&color=cb3837)](https://www.npmjs.com/package/@dahab-tech/altaer-sdk) [![License MIT](https://img.shields.io/npm/l/@dahab-tech/altaer-sdk)](./LICENSE) [![Node](https://img.shields.io/node/v/@dahab-tech/altaer-sdk?logo=node.js)](https://nodejs.org)
+
 Dispatch deliveries on [Altaer](https://altaer.app)'s driver network from your own system: create orders, stream live driver GPS, receive webhooks, reconcile your balance. One typed client, no hand-rolled HTTP.
 
-The complete integration guide — every operation with its SDK call, request/response schemas, webhook payloads, error semantics, and the sandbox workflow — lives at **[altaer.app/docs/api](https://altaer.app/docs/api)**. This README is the quickstart; that page is the reference.
+**[hub.altaer.app/docs/api](https://hub.altaer.app/docs/api)** is the full integration reference — every operation with its SDK call, request/response schemas, webhook payloads, error semantics, and the sandbox workflow. This README is the quickstart.
 
-Not on Node? The docs page is generated from an OpenAPI 3 spec you can download at [altaer.app/docs/api/openapi.yaml](https://altaer.app/docs/api/openapi.yaml) and feed to Postman, Insomnia, or any codegen.
+Not on Node? The docs page is generated from an OpenAPI 3 spec you can download at [hub.altaer.app/docs/api/openapi.yaml](https://hub.altaer.app/docs/api/openapi.yaml) and feed to Postman, Insomnia, or any codegen.
 
 ## Install
 
@@ -49,7 +51,11 @@ const order = await al.orders.create({
 console.log(order.id, order.status, order.trackingUrl);
 ```
 
-The full SDK surface: `al.orders.*` (create / get / list / cancel / redispatch / quote / rate), `al.finance.*` (balance / summary / overview / ledger / settlements / statement), `al.workspace.*` (profile / rotateCredentials / setWebhookUrl), and `al.tracking.subscribe()` for live driver GPS.
+The full SDK surface:\
+`al.orders.*` (create / get / list / cancel / redispatch / quote / rate)\
+`al.finance.*` (balance / summary / overview / ledger / settlements / statement)\
+`al.workspace.*` (profile / rotateCredentials / setWebhookUrl)\
+`al.tracking.subscribe()` for live driver GPS.
 
 ## Webhooks
 
@@ -93,7 +99,7 @@ Non-Express receivers: call `verifyWebhook({ body, signature, secret })` with th
 
 **Delivery rules:** at-least-once (dedupe on envelope `id`; order per-order events by `sequence`); retries fire on non-2xx or timeout, up to 12 attempts with exponential backoff (~25 min end-to-end), then dead-lettered — replay any past event from `/developers/events`. A thrown handler auto-responds 200 and doesn't retry (signature failures are the exception — they return 400 and retry through to dead-letter). A hung handler retries — guard slow branches with your own timeout.
 
-Every event's exact payload is in the **Webhooks** sidebar section at [altaer.app/docs/api](https://altaer.app/docs/api).
+Every event's exact payload is in the **Webhooks** sidebar section at [hub.altaer.app/docs/api](https://hub.altaer.app/docs/api).
 
 ## Local development
 

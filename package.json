@@ -1,12 +1,20 @@
 {
   "name": "@dahab-tech/altaer-sdk",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "description": "Official Node.js / TypeScript SDK for the Altaer delivery dispatch API",
   "keywords": [
     "altaer",
     "delivery",
     "logistics",
     "dispatch",
+    "courier",
+    "last-mile",
+    "cod",
+    "cash-on-delivery",
+    "webhook",
+    "webhooks",
+    "typescript",
+    "typescript-sdk",
     "api",
     "sdk"
   ],
@@ -20,6 +28,7 @@
   },
   "license": "MIT",
   "author": "Dahab Tech",
+  "sideEffects": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

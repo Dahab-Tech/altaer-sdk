@@ -2,6 +2,24 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. The format loosely follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.25] — 2026-07-19
+
+Docs / discovery polish. No code / contract change.
+
+### Added
+
+- **Badge row on the README** — prominent yellow "📖 Read the docs" CTA that jumps to [hub.altaer.app/docs/api](https://hub.altaer.app/docs/api), plus auto-updating npm version + license + Node engines badges. Renders on npm's package page above the fold so scanners hit the docs link immediately instead of parsing the intro paragraph.
+- **`sideEffects: false`** in `package.json` — declares the SDK has no import-time side effects, so bundlers (webpack, Rollup, esbuild, Vite) can tree-shake unused exports out of consumer bundles.
+- **Six extra npm search keywords** — `courier`, `last-mile`, `cod`, `cash-on-delivery`, `webhook`, `webhooks`, `typescript`, `typescript-sdk`. Increases the surface area for developers searching npm for delivery / webhook-related libraries.
+
+### Fixed
+
+- README's Webhooks section link was still pointing at the old `altaer.app/docs/api` host — now matches the badge + first-paragraph link at `hub.altaer.app/docs/api`.
+
+### Changed
+
+- **SDK surface listing** — the paragraph enumerating `al.orders.*` / `al.finance.*` / `al.workspace.*` / `al.tracking.subscribe()` broken into a bulleted list so each namespace scans on its own line. Same content in the openapi docs page.
+
 ## [0.0.24] — 2026-07-19
 
 Docs pass. No code / contract change.

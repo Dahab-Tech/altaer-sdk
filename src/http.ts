@@ -282,4 +282,4 @@ export class HttpClient {
 // Stamped on the User-Agent header so the platform team can see in
 // their logs which SDK version a partner is on. No automated sync —
 // bump this by hand together with `package.json`'s version.
-const SDK_VERSION = '0.0.24';
+const SDK_VERSION = '0.0.25';
