@@ -1,0 +1,9 @@
+# Built output — regenerated on every publish from the spec + source.
+dist/
+
+# We DO commit src/generated/api.ts:
+#   • Code review surfaces type changes when the spec changes.
+#   • Type-check works on a fresh checkout without running the generator.
+#   • Editor IntelliSense works immediately.
+# It's overwritten by `npm run generate:types` (a `prebuild` step) before
+# every build, so drift is impossible.

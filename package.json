@@ -1,0 +1,50 @@
+{
+  "name": "@dahab-tech/altaer-sdk",
+  "version": "0.0.24",
+  "description": "Official Node.js / TypeScript SDK for the Altaer delivery dispatch API",
+  "keywords": [
+    "altaer",
+    "delivery",
+    "logistics",
+    "dispatch",
+    "api",
+    "sdk"
+  ],
+  "homepage": "https://hub.altaer.app/docs/api",
+  "bugs": {
+    "url": "https://github.com/Dahab-Tech/altaer-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dahab-Tech/altaer-sdk.git"
+  },
+  "license": "MIT",
+  "author": "Dahab Tech",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run generate:types && tsc",
+    "clean": "rm -rf dist",
+    "generate:types": "openapi-typescript ../docs/openapi/openapi.yaml --output src/generated/api.ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
