@@ -97,7 +97,12 @@ app.post(
 
 Non-Express receivers: call `verifyWebhook({ body, signature, secret })` with the **raw request bytes** (not re-parsed JSON) and write your own response. Signature format: `t=<unixSeconds>,v1=<hexDigest>`, HMAC-SHA-256 over `` `${t}.${rawBody}` ``.
 
-**Delivery rules:** at-least-once (dedupe on envelope `id`; order per-order events by `sequence`); retries fire on non-2xx or timeout, up to 12 attempts with exponential backoff (~25 min end-to-end), then dead-lettered — replay any past event from `/developers/events`. A thrown handler auto-responds 200 and doesn't retry (signature failures are the exception — they return 400 and retry through to dead-letter). A hung handler retries — guard slow branches with your own timeout.
+**Delivery rules**
+
+- **At-least-once** — dedupe on envelope `id`; order per-order events by `sequence`.
+- **Retries fire on non-2xx or timeout** — up to 12 attempts with exponential backoff (~25 min end-to-end), then dead-lettered. Re-send any past event from `/developers/events`.
+- **A thrown handler = no retry** — the SDK catches your throw, logs to console, and responds `200`. Signature-verification failures are the exception: those return `400` and retry through to dead-letter (unrecoverable path).
+- **A hung handler = retries** — if your code never resolves, Altaer times out the request and treats it as a delivery failure. Guard slow branches with your own timeout.
 
 Every event's exact payload is in the **Webhooks** sidebar section at [hub.altaer.app/docs/api](https://hub.altaer.app/docs/api).
 
@@ -125,10 +130,14 @@ Paste that into **Developers → Webhook URL** and Save. Every event lands on yo
 
 ## Conventions
 
-- **Money is integer minor units** (piastres, cents, pence) — `5000` = E£50.00. Rates are decimals in `[0, 1]`.
-- **Phone numbers are E.164** (`+201001234567`).
-- **Timestamps are ISO-8601 UTC**. Two exceptions: webhook `created` (unix seconds) and tracking `at` (unix milliseconds).
-- **Every SDK method takes a trailing `opts`**: `signal` (AbortSignal to cancel the request from your code), `idempotencyKey` (override the auto-generated one), `maxRetries` (how many times the SDK retries a 5xx/network error from Altaer — client-side, unrelated to webhook retries).
+- **Money is integer minor units** — piastres, cents, pence. `5000` = E£50.00.
+- **Rates are decimals** in `[0, 1]`.
+- **Phone numbers are E.164** — `+201001234567`.
+- **Timestamps are ISO-8601 UTC** — two exceptions: webhook `created` is unix seconds, tracking `at` is unix milliseconds.
+- **Every SDK method takes a trailing `opts`**:
+  - `signal` — AbortSignal to cancel the request from your code.
+  - `idempotencyKey` — override the auto-generated one.
+  - `maxRetries` — how many times the SDK retries a 5xx/network error from Altaer. Client-side, unrelated to webhook retries.
 
 ## Errors
 
