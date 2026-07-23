@@ -268,4 +268,4 @@ export class HttpClient {
 
 // Stamped on User-Agent so the platform team can identify the SDK version in logs.
 // Bump manually together with package.json version.
-const SDK_VERSION = '0.0.30';
+const SDK_VERSION = '0.0.31';

@@ -598,7 +598,7 @@ export interface components {
              *     `merchantAmount` only and the fee lands on your settle tab.
              * @default true
              */
-            workspacePaysDelivery: boolean;
+            customerPaysDelivery: boolean;
             paymentMethod: components["schemas"]["PaymentMethod"];
             /**
              * @description Your own order id (e.g. `ORD-1234`). Stamped on every webhook
@@ -745,7 +745,7 @@ export interface components {
              *     When false, you absorbed the delivery fee — customer-facing
              *     `totalAmount` excludes delivery + Altaer VAT.
              */
-            workspacePaysDelivery: boolean;
+            customerPaysDelivery: boolean;
             /** @description Delivery fee snapshot (minor units). Absent pre-quote. */
             deliveryFee?: number;
             /** Format: date-time */

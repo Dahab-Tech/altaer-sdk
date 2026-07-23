@@ -31,7 +31,7 @@ const al = new AltaerClient({
 const order = await al.orders.create({
   merchantAmount: 5000, // integer minor units
   paymentMethod: 'cash',
-  workspacePaysDelivery: true, // fee rides on the customer's total; false = you absorb it
+  customerPaysDelivery: true, // fee rides on the customer's total; false = you absorb it
   isBuyAtPickup: false,
   externalOrderId: 'ORD-1234',
   pickUpData: {

@@ -2,6 +2,12 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.31] — 2026-07-23
+
+### Changed
+
+- **`workspacePaysDelivery` is now `customerPaysDelivery`** (on `OrderCreate` and `Order`) — same semantics, clearer name: `true` (the default) puts the delivery fee on the customer's `totalAmount`; `false` means you absorb it. All docs samples updated to match.
+
 ## [0.0.30] — 2026-07-23
 
 Unified `Order` payload + contract-exactness pass. The generated types now match the server byte-for-byte on every order surface.
