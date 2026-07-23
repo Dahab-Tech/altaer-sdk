@@ -1,19 +1,5 @@
-// Typed error hierarchy. Lets callers branch on `instanceof` rather
-// than parsing error message strings. Stripe / Twilio use the same
-// pattern — every API error becomes a discriminated class so a single
-// `try/catch` can route to the right handler.
-//
-// Public symbol naming follows the Altaer brand (e.g. AltaerError). The
-// internal `al-taer-driver` codebase identifier is unrelated and
-// stays.
-//
-//   try { await al.orders.create(...); }
-//   catch (e) {
-//     if (e instanceof ValidationError) return res.status(400).json(...);
-//     if (e instanceof RateLimitError)  return sleepAndRetry(e.retryAfterSec);
-//     if (e instanceof AuthError)       return rotateApiKey();
-//     throw e;
-//   }
+// Typed error hierarchy — callers branch on `instanceof` instead of parsing strings.
+// Every non-2xx response maps to a discriminated subclass of AltaerError.
 
 /** Base for every error this SDK raises on a non-2xx response. */
 export class AltaerError extends Error {
@@ -27,11 +13,8 @@ export class AltaerError extends Error {
   /** The raw response body (parsed JSON when possible, otherwise the
    *  raw text). Useful when debugging unfamiliar errors. */
   readonly body: unknown;
-  /** Structured context from the server's error envelope — shape
-   *  depends on `code`. E.g. `order/fleet_commission_above_delivery_fee`
-   *  carries `{ platformInvoiceAmount, deliveryFee }` (integer minor
-   *  units) so you can surface the exact amounts without re-quoting.
-   *  `null` when the envelope had no `data`. */
+  /** Structured context from the server error envelope (shape depends on `code`).
+   *  Null when envelope had no `data`. */
   readonly data: Record<string, unknown> | null;
   /** Server-side request id when Altaer returned one. Include this
    *  when reporting an issue — it lets the platform team look up the
@@ -50,7 +33,15 @@ export class AltaerError extends Error {
     this.statusCode = statusCode;
     this.code = code;
     this.body = body;
-    const envelopeData = (body as { data?: unknown } | null | undefined)?.data;
+    // Envelope nests data inside `error`; keep a top-level fallback for flat JSON.
+    const envelope = body as
+      | { error?: { data?: unknown } | string; data?: unknown }
+      | null
+      | undefined;
+    const rawError = envelope?.error;
+    const envelopeData =
+      (typeof rawError === 'object' && rawError !== null ? rawError.data : undefined) ??
+      envelope?.data;
     this.data =
       typeof envelopeData === 'object' && envelopeData !== null && !Array.isArray(envelopeData)
         ? (envelopeData as Record<string, unknown>)
@@ -71,8 +62,8 @@ export class ValidationError extends AltaerError {
 /** 401 — missing or invalid `x-api-key`. Usually means the key was
  *  rotated. Rotate-and-retry should be safe for idempotent calls. */
 export class AuthError extends AltaerError {
-  constructor(message: string, body: unknown, requestId: string | null) {
-    super(message, 401, null, body, requestId);
+  constructor(message: string, code: string | null, body: unknown, requestId: string | null) {
+    super(message, 401, code, body, requestId);
     this.name = 'AuthError';
   }
 }

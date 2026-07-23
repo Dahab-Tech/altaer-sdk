@@ -2,39 +2,20 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { SignatureVerificationError } from './errors';
 import type { WebhookEvent } from './types';
 
-// Webhook signature verification + typed parsing.
-//
-// Altaer signs every outbound webhook with HMAC-SHA-256 over
-// `${timestamp}.${rawBody}` using your `webhookSecret`. The header is
-//   X-Altaer-Signature: t=<unixSeconds>,v1=<hexHmac>
-// (same scheme Stripe uses for `Stripe-Signature`).
-//
-// Verification is two checks:
-//   1. The HMAC over `t.body` matches the v1 hex in the header.
-//      → constant-time compared via timingSafeEqual to defeat timing
-//        attacks.
-//   2. `t` is within `toleranceSec` of now. Prevents replay attacks
-//        where someone captured a valid signed body weeks ago and tries
-//        to replay it. Default 5 minutes (Stripe default).
-//
-// On any failure → throws SignatureVerificationError. The .reason field
-// distinguishes 'missing_header' / 'malformed_header' / 'expired' /
-// 'bad_signature' so you can log/alert appropriately.
+// HMAC-SHA-256 over `${timestamp}.${rawBody}`; header X-Altaer-Signature: t=<unix>,v1=<hex>.
+// Two checks: constant-time HMAC match + timestamp within toleranceSec (default 5 min, replay guard).
+// Throws SignatureVerificationError(.reason: missing_header|malformed_header|expired|bad_signature).
 
 const SIGNATURE_HEADER = 'x-altaer-signature';
 const DEFAULT_TOLERANCE_SEC = 5 * 60;
 
 export interface VerifyWebhookInput {
-  /** Raw request body bytes EXACTLY as sent by Altaer. CRITICAL: do
-   *  NOT parse JSON before passing it here — re-stringifying may
-   *  reorder keys, which invalidates the signature. Use raw-body
-   *  middleware (Express: `express.raw({ type: 'application/json' })`). */
+  /** Raw request body bytes exactly as received. Do NOT parse JSON first — re-stringifying
+   *  can reorder keys and invalidate the signature. Use express.raw({ type:'application/json' }). */
   body: string | Buffer;
   /** Value of the `X-Altaer-Signature` request header. */
   signature: string | string[] | null | undefined;
-  /** Your webhook secret (`whsec_...`). Auto-minted at workspace
-   *  create and revealed on the hub's /developers page. Rotate from
-   *  the same page — never auto-rotates, so rotate manually and
+  /** Your webhook secret (`whsec_...`). Rotate from the hub's /developers page;
    *  verify the new secret works before retiring the old one. */
   secret: string;
   /** Max age of the signed timestamp, in seconds. Older signatures are
@@ -43,33 +24,16 @@ export interface VerifyWebhookInput {
 }
 
 /** Verify a webhook signature and return the typed event. Throws
- *  SignatureVerificationError on any failure (missing header,
- *  malformed, expired, signature mismatch).
- *
- *  Example (Express):
- *    app.post('/webhooks/altaer',
- *      express.raw({ type: 'application/json' }),
- *      (req, res) => {
- *        const event = verifyWebhook({
- *          body: req.body,
- *          signature: req.headers['x-altaer-signature'],
- *          secret: process.env.ALTAER_WEBHOOK_SECRET!,
- *        });
- *        // event is typed — narrow on event.type
- *        if (event.type === 'order.completed') {
- *          event.data.financials!.deliveryFee; // ← typed
- *        }
- *        res.sendStatus(200);
- *      }
- *    );
- */
+ *  SignatureVerificationError on any failure (missing/malformed header,
+ *  expired timestamp, signature mismatch). Pass `body` as raw bytes — do
+ *  NOT parse JSON first. Narrow the result on `event.type`. */
 export const verifyWebhook = (input: VerifyWebhookInput): WebhookEvent => {
-  const header = _coerceHeader(input.signature);
+  const header = coerceHeader(input.signature);
   if (!header) {
     throw new SignatureVerificationError('Missing X-Altaer-Signature header', 'missing_header');
   }
 
-  const parsed = _parseSignatureHeader(header);
+  const parsed = parseSignatureHeader(header);
   if (!parsed) {
     throw new SignatureVerificationError(
       `Malformed X-Altaer-Signature header (expected "t=<unix>,v1=<hex>", got "${header}")`,
@@ -91,7 +55,7 @@ export const verifyWebhook = (input: VerifyWebhookInput): WebhookEvent => {
     .update(`${parsed.timestamp}.${bodyString}`)
     .digest('hex');
 
-  if (!_safeHexEqual(expected, parsed.v1)) {
+  if (!safeHexEqual(expected, parsed.v1)) {
     throw new SignatureVerificationError(
       'Signature mismatch — body may have been tampered with, or the wrong secret is configured',
       'bad_signature'
@@ -104,40 +68,9 @@ export const verifyWebhook = (input: VerifyWebhookInput): WebhookEvent => {
   return JSON.parse(bodyString) as WebhookEvent;
 };
 
-/** Express-style middleware factory. Composes the raw-body parser, the
- *  signature verify, and your event handler into one mount point.
- *
- *  Failure model — how each outcome interacts with Altaer's delivery
- *  loop (which retries any non-2xx or timeout up to 12 times):
- *    • Signature invalid  → 400. Altaer sees non-2xx and retries; the
- *                           path is unrecoverable so it dead-letters
- *                           after 12 attempts. Fix your `secret`.
- *    • Handler throws     → SDK swallows the error, logs to
- *                           console.error, and responds 200. No
- *                           retries — the same bug would just throw
- *                           again 11 more times. Watch your own log
- *                           for the "webhook handler threw" line.
- *    • Handler hangs      → Altaer times out (5 s) → non-2xx → retries
- *                           12×. Guard slow branches with your own
- *                           timeout.
- *    • Handler returns    → 200, done. No retry.
- *
- *  Express ≥4.16 has `express.raw` built in; no extra deps.
- *
- *  Example:
- *    import express from 'express';
- *    import { altaerWebhookRoute } from '@dahab-tech/altaer-sdk';
- *
- *    app.post('/webhooks/altaer', altaerWebhookRoute(
- *      { secret: process.env.ALTAER_WEBHOOK_SECRET! },
- *      async (event) => {
- *        switch (event.type) {
- *          case 'order.completed': await markOrderPaid(event.data.id); break;
- *          case 'order.canceled':  await refundWorkspace(event.data.id); break;
- *        }
- *      }
- *    ));
- */
+/** Express middleware: raw-body parser + signature verify + your handler.
+ *  Failure model (Altaer retries non-2xx up to 12×): bad-sig→400; handler throws→200 (stops retries);
+ *  handler hangs→5s timeout→retry; handler returns→200. */
 export const altaerWebhookRoute = (
   config: {
     secret: string;
@@ -151,12 +84,9 @@ export const altaerWebhookRoute = (
 ): MiddlewareFn[] => {
   const middlewares: MiddlewareFn[] = [];
   if (!config.skipRawParser) {
-    middlewares.push(_rawBodyMiddleware());
+    middlewares.push(rawBodyMiddleware());
   }
-  // `_next` (underscore-prefixed) tells TS the parameter is
-  // intentionally unused. We keep the 3-arg arity so Express treats
-  // this as a regular request middleware, not an error middleware
-  // (which would be `(err, req, res, next)`).
+  // 3-arg arity keeps Express from treating this as an error middleware (4-arg form).
   middlewares.push(async (req, res, _next) => {
     let event: WebhookEvent | null = null;
     try {
@@ -170,18 +100,13 @@ export const altaerWebhookRoute = (
       res.sendStatus(200);
     } catch (err) {
       if (err instanceof SignatureVerificationError) {
-        // 400 — the request never authenticated. Don't leak details
-        // in the body; the reason is in the SDK error for logging.
+        // 400 — don't leak details in the body; reason is in the SDK error for logging.
         res.status(400).send('Invalid signature');
         return;
       }
       // Handler bug. Log loudly on the tenant's side and 200 back so
-      // Altaer stops trying — retries won't fix a code path that
-      // always throws. The tenant is expected to notice from their
-      // own log/error tracker and fix. event is guaranteed non-null
-      // here: verifyWebhook throws only SignatureVerificationError,
-      // which was caught by the branch above; anything landing here
-      // came from the handler, after event was assigned.
+      // Altaer stops trying — retries won't fix a code path that always throws.
+      // event is non-null here: verifyWebhook only throws SignatureVerificationError.
       console.error(
         '[altaer-sdk] webhook handler threw — responded 200 to avoid Altaer retries. ' +
           'Event id: ' +
@@ -203,13 +128,13 @@ interface ParsedSignature {
   v1: string;
 }
 
-const _coerceHeader = (v: string | string[] | null | undefined): string | null => {
+const coerceHeader = (v: string | string[] | null | undefined): string | null => {
   if (!v) return null;
   if (Array.isArray(v)) return v[0] ?? null;
   return v;
 };
 
-const _parseSignatureHeader = (raw: string): ParsedSignature | null => {
+const parseSignatureHeader = (raw: string): ParsedSignature | null => {
   let timestamp: number | null = null;
   let v1: string | null = null;
   for (const part of raw.split(',')) {
@@ -226,7 +151,7 @@ const _parseSignatureHeader = (raw: string): ParsedSignature | null => {
   return { timestamp, v1 };
 };
 
-const _safeHexEqual = (a: string, b: string): boolean => {
+const safeHexEqual = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false;
   try {
     return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
@@ -235,9 +160,7 @@ const _safeHexEqual = (a: string, b: string): boolean => {
   }
 };
 
-// Minimal Express types — kept inline so the SDK has zero peer deps on
-// @types/express. Anything compatible (Fastify wrapped, etc.) works as
-// long as it implements this shape.
+// Inline Express shape so the SDK has zero peer deps on @types/express.
 interface ExpressRequest {
   body: string | Buffer;
   headers: Record<string, string | string[] | undefined>;
@@ -253,15 +176,11 @@ type MiddlewareFn = (
   next: (err?: unknown) => void
 ) => void | Promise<void>;
 
-// Default raw-body parser. Reads the entire request stream into a
-// Buffer before signature verification runs. Caps at 1 MiB — webhook
-// payloads are tiny (~5 KB typical) so anything above this is almost
-// certainly malicious.
-const _rawBodyMiddleware = (): MiddlewareFn => {
+// Raw-body parser. Caps at 1 MiB — webhook payloads are ~5 KB; anything larger
+// is almost certainly malicious.
+const rawBodyMiddleware = (): MiddlewareFn => {
   return (req, _res, next) => {
-    // Cast to the streaming surface — minimal duck-typing so we don't
-    // need to import IncomingMessage from node:http (keeps the public
-    // dts clean).
+    // Minimal duck-type cast — avoids importing node:http for a public-facing dts.
     const stream = req as unknown as {
       on: (event: string, cb: (...args: unknown[]) => void) => void;
     };

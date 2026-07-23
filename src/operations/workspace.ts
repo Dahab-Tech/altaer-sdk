@@ -6,10 +6,7 @@ import type {
   WorkspaceProfile,
 } from '../types';
 
-// Workspace resource. Mirrors the self-service endpoints under
-// /api/v1/workspaces (profile, credentials, webhook URL). Every method
-// is async, fully typed, and surfaces the typed error classes from
-// `../errors` on failure (see HttpClient for the mapping).
+// Workspace resource. Mirrors /api/v1/workspaces self-service endpoints.
 
 export class WorkspaceResource {
   constructor(private readonly http: HttpClient) {}
@@ -32,11 +29,9 @@ export class WorkspaceResource {
     return this.http.put<WorkspaceProfile>('/api/v1/workspaces/profile', input, opts);
   }
 
-  /** Rotate the API key. The new key is in the response ONCE and never
-   *  retrievable again — the old key stops working immediately, so this
-   *  very client instance's `apiKey` is stale after the call. Store the
-   *  new key and reconstruct your client (or restart) with it. The
-   *  webhook signing secret is separate; it rotates from the hub. */
+  /** Rotate the API key. New key is in the response ONCE — store it immediately.
+   *  Old key stops working right away; this client instance is stale after the call.
+   *  Webhook signing secret is separate and rotates from the hub. */
   async rotateCredentials(opts?: RequestOptions): Promise<RotateCredentialsResponse> {
     return this.http.post<RotateCredentialsResponse>(
       '/api/v1/workspaces/regenerate-credentials',

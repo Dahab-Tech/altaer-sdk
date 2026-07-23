@@ -31,6 +31,8 @@ const al = new AltaerClient({
 const order = await al.orders.create({
   merchantAmount: 5000, // integer minor units
   paymentMethod: 'cash',
+  workspacePaysDelivery: true, // fee rides on the customer's total; false = you absorb it
+  isBuyAtPickup: false,
   externalOrderId: 'ORD-1234',
   pickUpData: {
     contactName: "Mona's Bakery",
@@ -53,8 +55,8 @@ console.log(order.id, order.status, order.trackingUrl);
 
 The full SDK surface:\
 `al.orders.*` (create / get / list / cancel / redispatch / quote / rate)\
-`al.finance.*` (balance / summary / overview / ledger / settlements / statement)\
-`al.workspace.*` (profile / rotateCredentials / setWebhookUrl)\
+`al.finance.*` (balance / summary / overview / ledger / settlements / getSettlement / statement)\
+`al.workspace.*` (getProfile / updateProfile / rotateCredentials / setWebhookUrl)\
 `al.tracking.subscribe()` for live driver GPS.
 
 ## Webhooks
@@ -72,16 +74,17 @@ app.post(
       if (!event.livemode) return; // skip sandbox in prod handler
 
       try {
-        const { id, financials } = event.data;
+        // event.data's type follows event.type — read it inside the
+        // narrowed case, not before the switch.
         switch (event.type) {
           case 'order.completed':
-            await markPaid(id, financials!.deliveryFee);
+            await markPaid(event.data.id, event.data.financials!.deliveryFee);
             break;
           case 'order.canceled':
-            await refundIfCharged(id, financials);
+            await refundIfCharged(event.data.id, event.data.financials);
             break;
           case 'order.no_driver_found':
-            await notifyOpsAndRefund(id);
+            await notifyOpsAndRefund(event.data.id);
             break;
           default:
             // Unhandled events auto-respond 200 — no retry.
@@ -141,18 +144,48 @@ Paste that into **Developers → Webhook URL** and Save. Every event lands on yo
 
 ## Errors
 
-Failed SDK calls throw typed classes — use `instanceof`, not status switches. Each carries `statusCode`, `code`, `message`, `requestId` (quote it to support), and the raw `body`:
+Failed SDK calls throw typed classes — use `instanceof`, not status switches. Each carries `statusCode`, `code`, `message`, `requestId` (quote it to support), `data` (structured context when the error provides it), and the raw `body`:
 
-| Class                 | HTTP            | `code`                           |
-| --------------------- | --------------- | -------------------------------- |
-| `AuthenticationError` | 401             | `unauthorized`                   |
-| `PermissionError`     | 403             | `forbidden`                      |
-| `NotFoundError`       | 404             | `not_found`                      |
-| `ConflictError`       | 409             | `conflict`                       |
-| `ValidationError`     | 400/422         | `validation_error`               |
-| `RateLimitError`      | 429             | `rate_limited` (`retryAfterSec`) |
-| `ApiError`            | other 4xx/5xx   | server-provided                  |
-| `NetworkError`        | 0 (no response) | `network_error`                  |
+| Class             | HTTP             | `code`                                |
+| ----------------- | ---------------- | ------------------------------------- |
+| `ValidationError` | 400              | server-provided, e.g. `bad_request`   |
+| `AuthError`       | 401              | `auth/api_key_invalid`                |
+| `NotFoundError`   | 404              | e.g. `order/not_found`                |
+| `ConflictError`   | 409              | e.g. `order/not_ratable`              |
+| `RateLimitError`  | 429              | `rate_limited` (`retryAfterSec`)      |
+| `ServerError`     | 5xx              | `null` (thrown after retries exhaust) |
+| `NetworkError`    | 0 (no response)  | `network_error`                       |
+| `AltaerError`     | any other status | server-provided                       |
+
+Raw HTTP: `{ "error": { "code", "message" } }` body plus an `X-Request-Id` header.
+
+## Rate limits and retries
+
+Per-plan request ceiling. `429` carries `Retry-After` seconds (`RateLimitError.retryAfterSec`). The SDK auto-retries 5xx/network failures with jittered backoff (200/400/800 ms, cap 5 s); `maxRetries: 0` disables.
+
+## Idempotency
+
+`orders.create` auto-sends a fresh `Idempotency-Key` (UUID v4) per call, so network retries never double-dispatch. Pass `{ idempotencyKey }` in `opts` to control it: same key = the first response replayed (cached 24 h), new key = new order. Raw HTTP sends the header itself.
+
+## Authentication
+
+Every request sends your API key in the `x-api-key` header — the SDK does this for you. Rotate from `/developers` or `al.workspace.rotateCredentials()`; the old key stops working immediately.
+
+## Sandbox
+
+`https://staging.altaer.app` fully mirrors production: same API, test payment rails, simulated drivers, `livemode: false` webhooks. Provisioned per workspace (separate login, API key, webhook settings) — ask Altaer to enable yours.
+
+**Simulated fulfillment** — add `simulation` to the normal order-create body and a robot driver runs the real lifecycle in ~15 seconds: every status webhook fires with full financial snapshots, and a closing auto-settle zeroes the robot driver's ledger balance so sandbox finance surfaces show the whole money loop:
+
+| `simulation` | Lifecycle |
+| --- | --- |
+| `complete` | accept → picked up → completed (full financials) |
+| `driver_cancel_pre_pickup` | accept → driver cancels before pickup (no money owed) |
+| `driver_cancel_post_pickup` | accept → picked up → driver cancels (punitive financials) |
+| `no_driver_found` | search exhausts → `order.no_driver_found` webhook |
+| `random` | server picks one of the four above uniformly; the concrete choice is written back to `order.simulation` |
+
+Works on both platform- and fleet-routed workspaces — the robot inherits the order's dispatch snapshot at create time, so ledger legs and settlements land against the correct accounts. Rejected with `400` in the live environment.
 
 ## License
 

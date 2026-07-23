@@ -1,58 +1,9 @@
 import { io, type Socket } from 'socket.io-client';
 
-// Live order tracking over socket.io. Wraps the platform's tenant
-// socket channel so partners get a one-line subscribe with handlers,
-// and the SDK transparently handles:
-//
-//   • lazy connect          — the socket opens on first subscribe(),
-//                             not at AltaerClient construction. REST-only
-//                             callers never pay the connection cost.
-//   • listener multiplexing — multiple subscribe() calls for the same
-//                             order are independent listeners sharing ONE
-//                             server-side subscription (so they count
-//                             once against the tenant subscription
-//                             limit). Each handle's unsubscribe() detaches
-//                             only itself; the wire subscription is
-//                             released when the last listener detaches.
-//   • last-location replay  — a listener attaching to an order that is
-//                             already streaming receives the most recent
-//                             position immediately (async), then live
-//                             pushes. Late joiners don't stare at an
-//                             empty map until the driver next moves.
-//   • lease renewal         — the server's subscription lease lapses
-//                             after `trackingSubscriptionTtlMs` (default
-//                             60s). We re-emit `order:subscribe` at 70%
-//                             of `ttlSec` so the renew lands well before
-//                             expiry under jittery networks.
-//   • reconnect resubscribe — server tracking state is in-memory, so any
-//                             reconnect drops every subscription. On
-//                             socket.io's `connect` event we re-emit
-//                             `order:subscribe` for every active order.
-//                             Idempotent server-side.
-//   • terminal errors       — refusals the server will repeat forever
-//                             (order finished, not this tenant's order,
-//                             plan limit) carry `terminal: true` and the
-//                             SDK stops renewing/resubscribing that
-//                             order. Transient errors (`terminal: false`,
-//                             e.g. a socket drop) keep the subscription
-//                             registered and retry on reconnect.
-//   • idle disconnect       — when the last subscription is removed, the
-//                             socket is closed so a long-lived client
-//                             without active orders doesn't keep a TCP
-//                             connection open.
-//
-// Wire protocol (server side: socketServiceWorkspace.ts +
-// orderTrackingService.ts):
-//
-//   handshake  auth: { apiKey }
-//   c→s        emit  'order:subscribe'   { orderId }   ack: SubscribeAck
-//   c→s        emit  'order:unsubscribe' { orderId }   ack: { ok }
-//   s→c       'order:driverLocation' { orderId, driverId, latitude,
-//                                     longitude, at }
-//
-// The server enforces per-tenant authorization on subscribe — a tenant
-// can only ever track its own orders. Cross-tenant attempts come back
-// as { ok: false, error: 'not_found_or_forbidden' }.
+// Live tracking over socket.io. Socket is lazy (REST-only callers pay nothing).
+// Server state is in-memory — reconnect drops all leases; SDK re-emits order:subscribe on connect.
+// Terminal refusals (order_terminal, not_found_or_forbidden, plan limit) set terminal:true and stop renewal.
+// Wire: auth:{apiKey} → order:subscribe{orderId} ack → s→c order:driverLocation{orderId,lat,lng,at}.
 
 /** Driver location push payload. `at` is a unix-ms timestamp from the
  *  server, sourced from when the driver app last reported the position
@@ -65,18 +16,13 @@ export interface DriverLocationUpdate {
   at: number;
 }
 
-/** Server ack for `order:subscribe`. The OK branch carries the lease
- *  TTL in seconds; we use it to schedule lease renewal. The error
- *  branch surfaces a machine-readable reason — `subscription_limit_exceeded`
- *  also includes `limit` + `used` so the consumer UI can prompt the
- *  partner to upgrade. */
+/** Server ack for `order:subscribe`. OK branch carries TTL seconds used to
+ *  schedule lease renewal. Error includes `limit`+`used` on subscription_limit_exceeded. */
 export type SubscribeAck =
   | { ok: true; ttlSec: number }
   | { ok: false; error: string; limit?: number; used?: number };
 
-/** Subscription error codes the SDK normalizes into onError handlers.
- *  Anything else (e.g. an internal server error) surfaces as a generic
- *  string. */
+/** Error codes the SDK normalizes into onError; anything else surfaces as a generic string. */
 export type TrackingErrorCode =
   | 'subscription_limit_exceeded'
   | 'not_found_or_forbidden'
@@ -88,13 +34,8 @@ export type TrackingErrorCode =
 export interface TrackingError {
   code: TrackingErrorCode | string;
   message: string;
-  /** True when the server would refuse this order forever (order
-   *  finished, not this tenant's order, plan limit hit) — the SDK has
-   *  already stopped renewing/resubscribing, so release any UI tied to
-   *  the stream. A fresh `subscribe()` is still allowed once the cause
-   *  is fixed (e.g. after unsubscribing another order on a limit error).
-   *  False = transient (socket drop, ack timeout): the subscription
-   *  stays registered and the SDK retries on reconnect. */
+  /** True = server refuses this order forever (SDK stopped renewing — release UI).
+   *  False = transient (socket drop): subscription stays registered, SDK retries on reconnect. */
   terminal: boolean;
   /** Present on `subscription_limit_exceeded` — the tenant's plan cap. */
   limit?: number;
@@ -103,42 +44,27 @@ export interface TrackingError {
 }
 
 export interface SubscribeHandlers {
-  /** Driver moved (or first push after subscribe). The SDK dedupes
-   *  identical positions server-side, so handler fires only on change.
-   *  A listener attaching to an already-streaming order also receives
-   *  the most recent cached position immediately (async). */
+  /** Driver moved. Deduped server-side. Late-attaching listeners receive the
+   *  last cached position asynchronously before live pushes begin. */
   onLocation?: (update: DriverLocationUpdate) => void | Promise<void>;
-  /** Subscribe failed, lease renewal failed, or the connection broke.
-   *  Check `err.terminal`: true means the SDK has given up on this
-   *  order (no more retries) and the subscription is already removed;
-   *  false means transient — the subscription stays registered and the
-   *  SDK keeps retrying on reconnect (call `unsubscribe()` if you want
-   *  to give up early). */
+  /** Subscribe/renewal failed or connection broke. Check `err.terminal`:
+   *  true = SDK gave up (sub removed); false = transient, SDK retries on reconnect. */
   onError?: (err: TrackingError) => void | Promise<void>;
 }
 
-/** Returned from `client.tracking.subscribe(...)`. Each call gets its
- *  own handle — multiple handles on the same order share one
- *  server-side subscription, and `unsubscribe()` detaches only this
- *  handle's listeners. The wire subscription (and, if it was the last
- *  one, the socket) is released when the final handle unsubscribes. */
+/** Handle from `client.tracking.subscribe(...)`. Multiple handles on the same order
+ *  share one server-side lease; `unsubscribe()` detaches only this handle. */
 export interface OrderSubscription {
   readonly orderId: number;
-  /** Whether this handle is still attached AND the SDK believes the
-   *  server-side lease is live. Flips to false after `unsubscribe()`,
-   *  during a disconnect (until the automatic resubscribe lands), or
-   *  after a terminal error. */
+  /** True while handle is attached and the server-side lease is live. */
   readonly active: boolean;
   unsubscribe(): Promise<void>;
 }
 
 export interface TrackingConfig {
-  /** Override the auto-derived socket URL. Defaults to the same `baseUrl`
-   *  the REST client uses. */
+  /** Override the auto-derived socket URL. Defaults to `baseUrl`. */
   url?: string;
-  /** Fraction of `ttlSec` at which we schedule lease renewal. Defaults
-   *  to 0.7 — renews at 70% of the TTL so a renew has time to land
-   *  before expiry under jittery networks. Clamped to (0, 0.95]. */
+  /** Fraction of TTL at which lease renewal fires. Default 0.7 (clamped 0.01–0.95). */
   leaseRenewalRatio?: number;
 }
 
@@ -151,16 +77,14 @@ interface ListenerInternal {
 
 interface SubInternal {
   orderId: number;
-  /** Every attached listener, keyed by listener id. One wire
-   *  subscription fans out to all of them. */
+  /** Every attached listener, keyed by listener id. One wire subscription fans out to all. */
   listeners: Map<number, ListenerInternal>;
-  /** Whether the SDK currently holds a live server-side lease. */
+  /** True while the SDK holds a live server-side lease. */
   active: boolean;
   renewTimer: ReturnType<typeof setTimeout> | null;
-  /** Most recent push, replayed to late-joining listeners. */
+  /** Most recent push, replayed asynchronously to late-joining listeners. */
   lastLocation: DriverLocationUpdate | null;
-  /** Coalesces concurrent first-subscribe wire round-trips so N
-   *  parallel subscribe() calls produce one `order:subscribe` emit. */
+  /** Coalesces concurrent first-subscribe calls to one order:subscribe emit. */
   pending: Promise<void> | null;
 }
 
@@ -194,22 +118,10 @@ export class TrackingResource {
     this.leaseRatio = Math.min(Math.max(ratio, 0.01), 0.95);
   }
 
-  /** Subscribe to driver-location pushes for an order. Resolves once
-   *  the server holds a live lease — or immediately when this client
-   *  already tracks the order: the new listener attaches to the
-   *  existing lease and, if a position was already received, gets it
-   *  replayed asynchronously.
-   *
-   *  Multiple subscribe() calls for the same order are independent
-   *  listeners over ONE shared server-side subscription. Each returned
-   *  handle detaches only itself; the wire subscription is released
-   *  when the last handle unsubscribes.
-   *
-   *  Rejects with a `TrackingError` if the server refused — check
-   *  `terminal` to know whether retrying can ever succeed.
-   *
-   *  The returned handle stays valid across reconnects; the SDK
-   *  re-subscribes transparently. Call `handle.unsubscribe()` when done. */
+  /** Subscribe to driver-location pushes for an order. Resolves once the server
+   *  holds a live lease (or immediately if already tracked). Multiple calls share
+   *  one server-side subscription; each handle detaches only itself. Rejects with
+   *  TrackingError on refusal — check `terminal` to know if retrying can succeed. */
   async subscribe(orderId: number, handlers: SubscribeHandlers = {}): Promise<OrderSubscription> {
     if (!Number.isInteger(orderId) || orderId <= 0) {
       throw new Error(
@@ -254,10 +166,8 @@ export class TrackingResource {
     return this._toPublicSubscription(sub, listener);
   }
 
-  /** Close the socket immediately and tear down every active
-   *  subscription. Call this on graceful shutdown — otherwise the SDK
-   *  manages the lifecycle automatically (lazy connect on first
-   *  subscribe, idle disconnect after the last unsubscribe). */
+  /** Close the socket and tear down all subscriptions. Call on graceful shutdown;
+   *  otherwise the SDK manages lifecycle automatically. */
   async close(): Promise<void> {
     for (const sub of this.subs.values()) {
       if (sub.renewTimer) clearTimeout(sub.renewTimer);
@@ -285,8 +195,7 @@ export class TrackingResource {
     };
   }
 
-  /** One `order:subscribe` round-trip per sub, no matter how many
-   *  concurrent subscribe() calls await it. */
+  /** One order:subscribe round-trip per sub regardless of concurrent callers. */
   private _wireSubscribe(sub: SubInternal): Promise<void> {
     if (sub.pending) return sub.pending;
     const p = (async () => {
@@ -301,9 +210,8 @@ export class TrackingResource {
     return p;
   }
 
-  /** Replay the cached last position to a listener that attached after
-   *  the stream started. Async so the consumer receives it AFTER
-   *  subscribe() returns the handle, never re-entrantly. */
+  /** Replay last cached position to a late-attaching listener. Async so it
+   *  arrives after subscribe() returns, never re-entrantly. */
   private _replayLast(sub: SubInternal, listener: ListenerInternal): void {
     const snapshot = sub.lastLocation;
     const onLocation = listener.handlers.onLocation;
@@ -465,10 +373,8 @@ export class TrackingResource {
     }, renewMs);
   }
 
-  /** Renewal / reconnect-resubscribe failed. Terminal refusals tear the
-   *  sub down BEFORE dispatch so a handler that re-subscribes sees a
-   *  clean slate; transient ones leave the sub registered for the next
-   *  reconnect attempt. */
+  /** Renewal/reconnect-resubscribe failed. Terminal refusals tear the sub down
+   *  before dispatch so a re-subscribing handler sees a clean slate. */
   private _handleWireError(sub: SubInternal, raw: unknown): void {
     const err = this._normalizeError(raw);
     if (err.terminal) {
@@ -491,8 +397,7 @@ export class TrackingResource {
     this._maybeIdleDisconnect();
   }
 
-  /** Last sub gone? Drop the socket so an idle client doesn't keep a
-   *  TCP connection open. Next subscribe() re-opens lazily. */
+  /** Drop the socket when no subscriptions remain — prevents idle TCP connections. */
   private _maybeIdleDisconnect(): void {
     if (this.subs.size === 0 && this.socket) {
       this.socket.removeAllListeners();

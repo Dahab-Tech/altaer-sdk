@@ -12,14 +12,8 @@ import type {
   StatementInput,
 } from '../types';
 
-// Read-only finance resource. Mirrors the server-to-server endpoints
-// under /api/v1/workspaces/me/finance/* — the same data the hub renders,
-// authed via x-api-key so your backend can reconcile Altaer's books
-// against yours without scraping the dashboard.
-//
-// Mutating actions (request a settle, manage payment methods, rotate
-// secrets) are deliberately NOT in the SDK — those are operator
-// decisions that stay in the hub.
+// Read-only finance resource. Mirrors /api/v1/workspaces/me/finance/*.
+// Mutating actions (settle requests, payment methods, secret rotation) stay hub-only.
 
 export class FinanceResource {
   constructor(private readonly http: HttpClient) {}
@@ -51,16 +45,12 @@ export class FinanceResource {
     );
   }
 
-  /** Paginated per-row ledger history. Newest first. Each row exposes
-   *  a `workspaceAmountMinor` + `workspaceDirection` pair (always
-   *  positive magnitude + labeled direction enum) — sign it your way
-   *  when mirroring into your own books. `workspace_debit` = the row
-   *  increases what the workspace owes the platform; `workspace_credit`
-   *  = the row decreases it (or the platform owes the workspace on
-   *  this row). */
+  /** Paginated ledger history, newest first. Each row carries `workspaceAmountMinor` +
+   *  `workspaceDirection` (always positive + enum). `workspace_debit` = workspace owes
+   *  more; `workspace_credit` = workspace owes less (or platform owes workspace). */
   async ledger(input?: FinancePaginationInput, opts?: RequestOptions): Promise<LedgerListResponse> {
     return this.http.get<LedgerListResponse>(
-      `/api/v1/workspaces/me/finance/ledger${_paginationQs(input)}`,
+      `/api/v1/workspaces/me/finance/ledger${paginationQs(input)}`,
       opts
     );
   }
@@ -73,17 +63,13 @@ export class FinanceResource {
     opts?: RequestOptions
   ): Promise<SettlementListResponse> {
     return this.http.get<SettlementListResponse>(
-      `/api/v1/workspaces/me/finance/settlements${_paginationQs(input)}`,
+      `/api/v1/workspaces/me/finance/settlements${paginationQs(input)}`,
       opts
     );
   }
 
-  /** One settlement plus its per-order item detail. Items are returned
-   *  as a flat array tagged by `origin` and `type`. Use for line-by-
-   *  line audit / reconciliation when the webhook's `breakdown` totals
-   *  aren't enough (most reconciliation can skip this — the settle
-   *  webhook's `breakdown.<origin>` already carries the signed slice
-   *  totals). */
+  /** One settlement plus per-order items tagged by `origin`+`type`. Use for
+   *  line-by-line audit when the settle webhook's `breakdown.<origin>` totals aren't enough. */
   async getSettlement(id: number, opts?: RequestOptions): Promise<SettlementWithItems> {
     return this.http.get<SettlementWithItems>(
       `/api/v1/workspaces/me/finance/settlements/${encodeURIComponent(String(id))}`,
@@ -107,7 +93,7 @@ export class FinanceResource {
   }
 }
 
-const _paginationQs = (input?: FinancePaginationInput): string => {
+const paginationQs = (input?: FinancePaginationInput): string => {
   const params = new URLSearchParams();
   if (input?.limit !== undefined) params.set('limit', String(input.limit));
   if (input?.offset !== undefined) params.set('offset', String(input.offset));

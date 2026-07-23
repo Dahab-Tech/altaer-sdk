@@ -11,21 +11,13 @@ import type {
   RatingResponse,
 } from '../types';
 
-// Orders resource. Mirrors POST/GET endpoints under
-// /api/v1/workspaces/orders. Every method is async, fully typed, and
-// surfaces the typed error classes from `../errors` on failure (see
-// HttpClient for the mapping).
+// Orders resource. Mirrors /api/v1/workspaces/orders endpoints.
 
 export class OrdersResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Create a delivery order. The order enters `initiated` and progresses
-   *  through dispatcher → driver acceptance → pickup → dropoff →
-   *  completed. Status changes fire `order.*` webhooks to your endpoint.
-   *
-   *  Pass an `idempotencyKey` to make safe retries return the original
-   *  result instead of double-dispatching. If omitted, the SDK auto-
-   *  generates one per call. */
+  /** Create a delivery order. Status changes fire `order.*` webhooks. Pass an
+   *  `idempotencyKey` to make retries safe; auto-generated per call if omitted. */
   async create(input: CreateOrderInput, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>('/api/v1/workspaces/orders', input, opts);
   }
@@ -50,17 +42,9 @@ export class OrdersResource {
     return this.http.get<OrderListResponse>(`/api/v1/workspaces/orders${qs ? `?${qs}` : ''}`, opts);
   }
 
-  /** Cancel an order. `canceledBy` attributes the cancel to `pickup`
-   *  (sender), `dropoff` (recipient), or `workspace` (default) — audit
-   *  trail only, economics are identical across the three. `driver` /
-   *  `system` are reserved for the driver app and server jobs; sending
-   *  them falls back to `workspace`, so integrators can't forge the
-   *  driver-cancel ledger penalty. `pickup` is rejected once the driver
-   *  has the goods (409).
-   *
-   *  Pre-pickup cancels are free — no money moves. Post-pickup cancels
-   *  may carry charges; the driver still earns, and the response's
-   *  `financials` block shows the effect. */
+  /** Cancel an order. `canceledBy` is audit-trail only; `driver`/`system` fall back to `workspace`
+   *  (prevents forging driver-cancel penalty). `pickup` rejected post-goods (409).
+   *  Pre-pickup is free; post-pickup may charge — see `financials`. Idempotent. */
   async cancel(orderId: number, input?: CancelOrderInput, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/cancel`, input ?? {}, opts);
   }
@@ -80,10 +64,8 @@ export class OrdersResource {
     return this.http.post<Quote>('/api/v1/workspaces/orders/quote', input, opts);
   }
 
-  /** Rate the driver of a completed delivery. The platform accepts up
-   *  to 2 ratings per delivery — one for the pickup-side party
-   *  (cook/sender) and one for the dropoff-side party (recipient).
-   *  Both blend into the driver's rolling average. */
+  /** Rate the driver of a delivery. Ratable once `completed` or `canceled` after driver
+   *  engagement (409 otherwise). Up to 2 ratings per delivery (pickup/dropoff); repeats overwrite. */
   async rate(
     orderId: number,
     input: RateOrderInput,

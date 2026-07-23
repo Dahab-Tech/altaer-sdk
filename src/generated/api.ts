@@ -95,6 +95,10 @@ export interface paths {
          *     the goods), `canceledBy: pickup` is rejected with 409
          *     `order/cancel_not_allowed_for_actor` — only `dropoff` or
          *     `workspace` may cancel from there.
+         *
+         *     **Idempotent:** canceling an already-canceled order is not an
+         *     error — it returns `200` with the current order, so best-effort
+         *     cancel flows can safely repeat the call.
          */
         post: operations["cancelOrder"];
         delete?: never;
@@ -162,8 +166,10 @@ export interface paths {
         /**
          * Rate the driver of a delivery
          * @description Submit for the pickup party (sender) or the dropoff party
-         *     (recipient) — max one each per delivery. Both blend into the
-         *     driver's rolling average.
+         *     (recipient) — max one each per delivery (repeat submissions for
+         *     the same party overwrite). Both blend into the driver's rolling
+         *     average. Ratable once the order is `completed`, or `canceled`
+         *     after a driver was engaged.
          */
         post: operations["rateDriver"];
         delete?: never;
@@ -500,7 +506,7 @@ export interface components {
          *     cancel from pre-pickup workspace cancel.
          * @enum {string}
          */
-        Outcome: "in_progress" | "completed" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "workspace_cancel_pre_pickup" | "workspace_cancel_post_pickup";
+        Outcome: "completed" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "workspace_cancel_pre_pickup" | "workspace_cancel_post_pickup";
         Destination: {
             contactName: string;
             /** @example +201001234567 */
@@ -686,15 +692,76 @@ export interface components {
              */
             simulation?: "complete" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "no_driver_found" | "random";
             status: components["schemas"]["OrderStatus"];
-            driverId?: number | null;
-            driverName?: string | null;
-            driverPhoneNumber?: string | null;
-            driverImage?: string | null;
+            driverId: number | null;
+            driverName: string | null;
+            driverPhoneNumber: string | null;
+            driverImage: string | null;
+            /**
+             * @description Cache-busting nonce for the driver's profile photo — bumped
+             *     each re-upload. Combine with `driverImage` to build a stable
+             *     image URL that busts on change.
+             */
+            driverProfilePictureNonce: string | null;
+            /**
+             * @description Driver's blended rating across all deliveries (0–5). Null
+             *     until they've been rated.
+             */
+            driverRatingAvg: number | null;
+            /** @description Number of rated deliveries behind `driverRatingAvg`. */
+            driverRatingCount: number | null;
             /** @description Driver's last-known location. Null until accept. */
-            currentLocation?: {
+            currentLocation: {
                 latitude?: number;
                 longitude?: number;
             } | null;
+            /** @description Where the driver picks up the goods. */
+            pickUpData: components["schemas"]["Destination"];
+            /** @description Where the driver delivers the goods. */
+            dropOffData: components["schemas"]["Destination"];
+            /**
+             * @description `card` = customer prepaid online via your PSP (mirrors
+             *     `prepaidAmount`); `cash` = driver collects `totalAmount` at
+             *     the door.
+             */
+            paymentMethod: components["schemas"]["PaymentMethod"];
+            /**
+             * @description Opaque merchant slice (goods + your own tax/tips baked in).
+             *     Altaer never decomposes it. Minor units.
+             */
+            merchantAmount: number;
+            /**
+             * @description Customer-facing total. Cash: what the driver collects at
+             *     the door. Card: what your PSP charged (equals
+             *     `prepaidAmount`). Minor units.
+             */
+            totalAmount: number;
+            /**
+             * @description Prepaid online total. Mirrors `totalAmount` on card orders.
+             *     Null on cash COD.
+             */
+            prepaidAmount?: number | null;
+            /**
+             * @description Whether the customer was charged for delivery on this order.
+             *     When false, you absorbed the delivery fee — customer-facing
+             *     `totalAmount` excludes delivery + Altaer VAT.
+             */
+            workspacePaysDelivery: boolean;
+            /** @description Delivery fee snapshot (minor units). Absent pre-quote. */
+            deliveryFee?: number;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description Server wall-clock at pickup-mark. Null pre-pickup.
+             */
+            pickedUpAt?: string | null;
+            /**
+             * Format: date-time
+             * @description Server wall-clock at delivery-mark. Null pre-terminal.
+             */
+            completedAt?: string | null;
             canceledBy?: components["schemas"]["CanceledBy"];
             cancelReason?: string;
             cancelReasonCode?: components["schemas"]["CancelReasonCode"];
@@ -702,6 +769,18 @@ export interface components {
             etaPickupAt?: string | null;
             /** Format: date-time */
             etaDropoffAt?: string | null;
+            /**
+             * @description Road-snapped planned route distance in metres
+             *     (driver→pickup→dropoff). Captured at accept-time from the
+             *     Routes API. Null on rows that never reached accept.
+             */
+            routeDistanceMeters?: number | null;
+            /**
+             * @description Seconds the driver's foreground-location task was
+             *     unreachable during the trip (accept → terminal). SLA signal
+             *     — 0 on a healthy trip.
+             */
+            driverOfflineSeconds?: number | null;
             /**
              * @description Public live-map share link for the end customer (no auth).
              *     Null only on legacy orders without tracking tokens.
@@ -735,9 +814,9 @@ export interface components {
             /**
              * @description Echo of the create-time flag: the driver buys the goods at
              *     pickup, collects goods + delivery at dropoff. Goods money is
-             *     off Altaer's ledger.
+             *     off Altaer's ledger. Always present (false when not used).
              */
-            isBuyAtPickup?: boolean | null;
+            isBuyAtPickup: boolean;
             /**
              * @description Expected driver spend at pickup (minor units).
              *     Informational. Null on non-buy-at-pickup orders.
@@ -748,6 +827,12 @@ export interface components {
              *     Audit only. Null until recorded.
              */
             buyAtPickupPaidByDriver?: number | null;
+            /**
+             * @description Signed URL for the driver's pickup-receipt photo. Short-
+             *     lived (refresh the URL by refetching the order). Null when
+             *     no receipt was uploaded.
+             */
+            buyAtPickupReceiptUrl?: string | null;
         };
         Quote: {
             /**
@@ -769,7 +854,10 @@ export interface components {
              *     the commission on fleet dispatch.
              */
             platformFee?: number;
-            /** @description VAT on `platformFee`. Omitted when platform VAT is off. */
+            /**
+             * @description VAT on `platformFee`. `0` when platform VAT is off in your
+             *     jurisdiction.
+             */
             platformFeeVat?: number;
             /**
              * @description `platformFee + platformFeeVat`. Platform dispatch: you owe
@@ -821,10 +909,12 @@ export interface components {
         RatingResponse: {
             id: number;
             orderId: number;
+            /** @description The driver the rating landed on. */
+            driverId: number;
             /** @enum {string} */
             party: "pickup" | "dropoff";
             stars: number;
-            comment?: string | null;
+            comment: string | null;
             /** Format: date-time */
             createdAt: string;
         };
@@ -1109,12 +1199,44 @@ export interface components {
              */
             breakdown: components["schemas"]["OriginBreakdown"];
         };
+        /**
+         * @description Public-facing fleet snapshot embedded in every fleet.* webhook.
+         *     Widened from the historical minimum (id/name/brandingName/
+         *     ownerOperatorId) with the fields tenants use to pair against a
+         *     fleet and badge trusted rows. Sensitive operator-internal
+         *     fields (contact info, fee structure, join token, trust audit
+         *     trail) are never exposed on the wire.
+         */
         FleetSnapshot: {
             id: number;
             name: string;
             /** @description Falls back to `name` when the fleet has no branding name. */
             brandingName: string;
+            /**
+             * @description Public brand asset URL for tenant renders — "Delivered by
+             *     {name} [logo]". Null when the fleet has no logo uploaded.
+             */
+            brandingLogoUrl?: string | null;
             ownerOperatorId: number;
+            /**
+             * @description Fleet's operating currency. Tenants pair a workspace with a
+             *     fleet whose currency matches — same check the server
+             *     enforces at pairing time.
+             */
+            currency: components["schemas"]["Currency"];
+            /**
+             * @description `own` = operator-owned only; serves workspaces owned by the
+             *     same operator. `trusted` = admin-approved for the Altaer
+             *     network; serves any workspace via cross-operator dispatch.
+             * @enum {string}
+             */
+            trustLevel: "own" | "trusted";
+            /**
+             * @description Server-derived — false when soft-deleted OR
+             *     operator-disabled. Tenants that cache the fleet picker use
+             *     it to hide gone rows without a second lookup.
+             */
+            isActive: boolean;
         };
         DriverSnapshot: {
             id: number;
@@ -1492,22 +1614,25 @@ export interface components {
             webhookUrl: string | null;
         };
         ErrorResponse: {
-            /** @description Human-readable description. */
-            error: string;
-            /**
-             * @description Machine-readable code for programmatic branching. When present,
-             *     prefer this over parsing the `error` message.
-             */
-            code?: string;
-            /**
-             * @description Optional structured context — shape depends on `code`. E.g.
-             *     `order/fleet_commission_above_delivery_fee` carries
-             *     `{ platformInvoiceAmount, deliveryFee }` (integer minor units)
-             *     so clients can surface the exact amounts without re-quoting.
-             */
-            data?: {
-                [key: string]: unknown;
-            } | null;
+            error: {
+                /**
+                 * @description Machine-readable code for programmatic branching (e.g.
+                 *     `order/not_found`). Prefer this over parsing `message`.
+                 */
+                code: string;
+                /** @description Human-readable description. */
+                message: string;
+                /**
+                 * @description Optional structured context — shape depends on `code`, key
+                 *     omitted when absent. E.g.
+                 *     `order/fleet_commission_above_delivery_fee` carries
+                 *     `{ platformInvoiceAmount, deliveryFee }` (integer minor units)
+                 *     so clients can surface the exact amounts without re-quoting.
+                 */
+                data?: {
+                    [key: string]: unknown;
+                };
+            };
         };
     };
     responses: {
@@ -1694,10 +1819,13 @@ export interface operations {
             401: components["responses"]["AuthError"];
             404: components["responses"]["NotFound"];
             /**
-             * @description Not cancelable in this state (`order/cannot_cancel_in_state`,
-             *     `order/already_canceled`, `order/already_completed`), or the
-             *     actor isn't allowed at the current status
-             *     (`order/cancel_not_allowed_for_actor`).
+             * @description Not cancelable in this state (`order/already_completed` for
+             *     completed orders, `order/cannot_cancel_in_state` otherwise),
+             *     the actor isn't allowed at the current status
+             *     (`order/cancel_not_allowed_for_actor`), or a concurrent
+             *     update won the race (`order/already_canceled` — re-fetch to
+             *     see the current state). An already-canceled order is NOT a
+             *     409; it returns `200` (idempotent).
              */
             409: {
                 headers: {
@@ -1731,7 +1859,7 @@ export interface operations {
             };
             401: components["responses"]["AuthError"];
             404: components["responses"]["NotFound"];
-            /** @description Order is not in `noDriverFound` state. */
+            /** @description Order is not in `noDriverFound` state, or its state changed mid-request (`order/cannot_redispatch_in_state`). */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1808,6 +1936,15 @@ export interface operations {
             400: components["responses"]["ValidationError"];
             401: components["responses"]["AuthError"];
             404: components["responses"]["NotFound"];
+            /** @description Order isn't ratable yet (`order/not_ratable`), or it never had a driver engaged (`order/no_driver_to_rate`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     trackDriverLocation: {

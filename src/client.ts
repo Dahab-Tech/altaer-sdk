@@ -5,19 +5,9 @@ import { WorkspaceResource } from './operations/workspace';
 import { TrackingResource, type TrackingConfig } from './tracking';
 
 /** Top-level SDK client. Construct once at boot, share across handlers.
- *
- *  Configuration:
- *    apiKey       — required, your tenant's `x-api-key`
- *    baseUrl      — optional, defaults to https://altaer.app
- *    timeoutMs    — optional, default 30000ms per request
- *    maxRetries   — optional, default 3 (5xx + network only; 4xx never
- *                   retries because the body is wrong on the caller's side)
- *    fetch        — optional, BYO fetch (useful in tests or non-Node runtimes)
- *
- *  All operation methods are accessed via the namespaced resources —
- *  e.g. `client.orders.create(...)`. The flat structure lets editors
- *  surface every method with one autocomplete pass.
- */
+ *  Options: apiKey (required), baseUrl, timeoutMs (30s), maxRetries (3, 5xx+network only),
+ *  fetch (BYO for tests/non-Node runtimes). Operations via namespaced resources:
+ *  client.orders, client.finance, client.workspace, client.tracking. */
 export interface AltaerClientConfig extends HttpClientConfig {
   /** Tracking-specific config (socket URL override, lease renewal ratio).
    *  The socket is lazily opened on the first `client.tracking.subscribe(...)`
@@ -29,25 +19,20 @@ export class AltaerClient {
   /** Orders — create, list, get, cancel, redispatch, quote, rate. */
   readonly orders: OrdersResource;
 
-  /** Finance reads for reconciliation — balance, summary, overview,
-   *  ledger, settlements, statement. Read-only; mutating actions
-   *  (request a settle, manage methods) remain hub-only by design. */
+  /** Finance reads for reconciliation — balance, summary, overview, ledger, settlements, statement.
+   *  Read-only; settle requests and method management remain hub-only. */
   readonly finance: FinanceResource;
 
   /** Your workspace's own profile + integration settings — getProfile,
    *  updateProfile, rotateCredentials, setWebhookUrl. */
   readonly workspace: WorkspaceResource;
 
-  /** Live driver-location tracking over socket.io. Lazy — no socket is
-   *  opened until the first `subscribe()`. Call `tracking.close()` on
-   *  graceful shutdown to drop the connection (the SDK also auto-closes
-   *  when the last subscription is removed). */
+  /** Live driver-location tracking over socket.io. Socket is lazy — no connection
+   *  until first subscribe(). Auto-closes when last subscription is removed. */
   readonly tracking: TrackingResource;
 
-  /** Lower-level HTTP transport. Most callers won't touch this, but
-   *  it's exposed so you can hit endpoints the SDK hasn't typed yet
-   *  (early access, custom integrations) with the same auth + retries
-   *  + idempotency-key behavior the typed methods get. */
+  /** Lower-level HTTP transport for untyped endpoints, with the same auth + retries
+   *  + idempotency-key behavior as typed methods. */
   readonly http: HttpClient;
 
   constructor(config: AltaerClientConfig) {

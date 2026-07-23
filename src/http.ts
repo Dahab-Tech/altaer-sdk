@@ -10,22 +10,9 @@ import {
   ValidationError,
 } from './errors';
 
-// Internal HTTP transport. Adds the three ergonomic touches over a
-// raw fetch:
-//
-//   1. Auto Idempotency-Key  — every POST gets a UUID v4 unless caller
-//                              passes their own; safe network retries
-//                              return the cached response (24h TTL on
-//                              the server).
-//   2. Exponential backoff   — 5xx and network errors auto-retry with
-//                              200ms / 400ms / 800ms … capped at 5s,
-//                              up to `maxRetries`. With idempotency-key
-//                              this is always safe.
-//   3. Typed error mapping   — 400 → ValidationError, 401 → AuthError,
-//                              404 → NotFoundError, etc. Callers branch
-//                              on `instanceof` instead of parsing strings.
-//
-// No third-party deps — uses Node 18's built-in `fetch` and `crypto`.
+// Internal HTTP transport. Three invariants: (1) auto Idempotency-Key on every POST (UUID v4, 24h TTL);
+// (2) exponential backoff on 5xx+network (200ms/400ms/800ms…cap 5s); (3) typed error mapping
+// (400→ValidationError, 401→AuthError, 404→NotFoundError, 429→RateLimitError, 5xx→ServerError).
 
 export interface RequestOptions {
   /** Override the auto-generated Idempotency-Key. Useful when you're
@@ -67,9 +54,7 @@ export class HttpClient {
   private readonly maxRetries: number;
   private readonly fetchImpl: typeof fetch;
 
-  /** Resolved base URL (trailing slash stripped). Exposed so the
-   *  tracking socket can connect to the same origin without re-parsing
-   *  the user-supplied config. */
+  /** Resolved base URL (trailing slash stripped). Exposed for the tracking socket. */
   get baseUrlForTracking(): string {
     return this.baseUrl;
   }
@@ -115,15 +100,12 @@ export class HttpClient {
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const maxRetries = opts?.maxRetries ?? this.maxRetries;
 
-    // Idempotency-Key persists across retries — that's the whole point.
-    // The server caches the first response (24h) and replays it on
-    // subsequent attempts with the same key, so a retry storm can never
-    // double-charge / double-create.
+    // Idempotency-Key persists across retries — server caches first response 24h
+    // and replays it, so retries can never double-charge or double-create.
     const idempotencyKey = method === 'POST' ? (opts?.idempotencyKey ?? randomUUID()) : undefined;
 
     let attempt = 0;
-    // No real ceiling on `for` — we exit via `return` on success or via
-    // `throw` after retries exhausted.
+    // Loop exits via `return` on success or `throw` when retries are exhausted.
     for (;;) {
       attempt += 1;
       try {
@@ -135,8 +117,7 @@ export class HttpClient {
           return await this._parseSuccess<T>(response);
         }
         const error = await this._buildError(response);
-        // Only retry on 5xx within the retry budget. 4xx errors are
-        // caller's fault — retrying won't fix them.
+        // 4xx = caller's fault; never retry. 5xx = retry within budget.
         if (response.status >= 500 && response.status < 600 && attempt <= maxRetries) {
           await this._backoff(attempt);
           continue;
@@ -144,9 +125,8 @@ export class HttpClient {
         throw error;
       } catch (err) {
         if (err instanceof AltaerError) throw err;
-        // Network-layer failure (DNS, socket, timeout, abort). Retry if
-        // we have budget left; the body never reached the server so
-        // re-sending with the same idempotency-key is safe by definition.
+        // Network failure — body never reached the server, so retry with the same
+        // idempotency-key is safe by construction.
         const networkErr = new NetworkError(err instanceof Error ? err.message : String(err), err);
         if (attempt <= maxRetries) {
           await this._backoff(attempt);
@@ -175,8 +155,7 @@ export class HttpClient {
       headers['Idempotency-Key'] = extras.idempotencyKey;
     }
 
-    // Compose a timeout AbortController with the caller's signal so
-    // either can cancel.
+    // Compose timeout AbortController with caller's signal so either can cancel.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
     const linkedSignal = extras.signal
@@ -206,9 +185,7 @@ export class HttpClient {
   }
 
   private async _parseSuccess<T>(response: Response): Promise<T> {
-    // 204 No Content — treat as void. Callers typing the return as
-    // `void` or `{}` get an empty object back so destructuring doesn't
-    // throw at runtime.
+    // 204 No Content — return empty object so destructuring callers don't throw.
     if (response.status === 204) return {} as T;
     const text = await response.text();
     if (!text) return {} as T;
@@ -234,9 +211,20 @@ export class HttpClient {
       if (text) {
         body = JSON.parse(text);
         if (typeof body === 'object' && body !== null) {
-          const obj = body as { error?: string; code?: string; message?: string };
-          message = obj.error ?? obj.message ?? message;
-          code = obj.code ?? null;
+          const obj = body as {
+            error?: { code?: string; message?: string } | string;
+            code?: string;
+            message?: string;
+          };
+          if (typeof obj.error === 'object' && obj.error !== null) {
+            // The API's envelope: { error: { code, message, data? } }.
+            message = obj.error.message ?? message;
+            code = obj.error.code ?? null;
+          } else {
+            // Flat fallback for non-envelope JSON (proxies, gateways).
+            message = obj.error ?? obj.message ?? message;
+            code = obj.code ?? null;
+          }
         }
       }
     } catch {
@@ -247,7 +235,7 @@ export class HttpClient {
       case 400:
         return new ValidationError(message, code, body, requestId);
       case 401:
-        return new AuthError(message, body, requestId);
+        return new AuthError(message, code, body, requestId);
       case 404:
         return new NotFoundError(message, code, body, requestId);
       case 409:
@@ -271,15 +259,13 @@ export class HttpClient {
   }
 
   private async _backoff(attempt: number): Promise<void> {
-    // Exponential with full jitter — same shape AWS recommends. The
-    // jitter prevents synchronized retry storms across many clients.
+    // Full-jitter exponential backoff (AWS pattern) — prevents synchronized retry storms.
     const exp = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
     const delay = Math.floor(Math.random() * exp);
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
-// Stamped on the User-Agent header so the platform team can see in
-// their logs which SDK version a partner is on. No automated sync —
-// bump this by hand together with `package.json`'s version.
-const SDK_VERSION = '0.0.28';
+// Stamped on User-Agent so the platform team can identify the SDK version in logs.
+// Bump manually together with package.json version.
+const SDK_VERSION = '0.0.30';
