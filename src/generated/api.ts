@@ -588,18 +588,45 @@ export interface components {
                 /** @description Merchant slice + customer-billed delivery. Cash: COD collected at door. */
                 orderTotalAmount: number;
                 /**
-                 * @description Ex-VAT platform charge: `deliveryFee` on platform dispatch,
-                 *     commission on fleet dispatch. 0 on pre-pickup cancels.
+                 * @description Altaer's invoice for THIS outcome. Self-describing
+                 *     (`billedTo` / `purpose`) so you never need to branch on
+                 *     `fulfillment.kind` to know what the numbers mean.
+                 *
+                 *     - Trusted / platform-network → `billedTo=workspace`,
+                 *       `purpose=delivery`, `subtotal=deliveryFee`,
+                 *       `vat=deliveryVAT`, `total=deliveryFee+deliveryVAT`.
+                 *     - Own-fleet → `billedTo=operator`,
+                 *       `purpose=commission`, `subtotal=commission`,
+                 *       `vat=commissionVAT`,
+                 *       `total=commission+commissionVAT`.
+                 *
+                 *     All zero on pre-pickup cancels (no service rendered);
+                 *     `vat.amount` zero on driver-cancel-post-pickup (punitive
+                 *     recovery, not a taxable supply). Zero VAT in tax-off
+                 *     jurisdictions.
                  */
-                platformFee: number;
-                /**
-                 * @description VAT on `platformFee` — record as input VAT credit. 0 on
-                 *     driver-cancel-post-pickup (failed delivery = no taxable
-                 *     supply).
-                 */
-                platformFeeVat: number;
-                /** @description `platformFee + platformFeeVat` — the counterparty amount per row. */
-                platformShare: number;
+                platformInvoice: {
+                    /**
+                     * @description Who owes altaer for this outcome.
+                     * @enum {string}
+                     */
+                    billedTo: "workspace" | "operator";
+                    /**
+                     * @description What the bill is for.
+                     * @enum {string}
+                     */
+                    purpose: "delivery" | "commission";
+                    /** @description Ex-VAT charge (minor units). */
+                    subtotal: number;
+                    vat: {
+                        /** @description 0–1; 0 when tax-off or no taxable supply. */
+                        rate: number;
+                        /** @description rate × subtotal (minor units). */
+                        amount: number;
+                    };
+                    /** @description `subtotal + vat.amount` — the ONE number owed to altaer for this row. */
+                    total: number;
+                };
             };
             /**
              * @description Own-fleet dispatch only. `platform` and `trusted` scopes
@@ -609,17 +636,17 @@ export interface components {
             fleet: {
                 /**
                  * Format: float
-                 * @description Effective rate = platformFee / deliveryFee (informational).
+                 * @description Effective rate = commission / deliveryFee (informational).
                  */
                 commissionRate: number;
-                /** @description (deliveryFee − platformShare) × operatorMarginRate. */
+                /** @description (deliveryFee − platformInvoice.total) × operatorMarginRate. */
                 operatorMargin: number;
                 /**
                  * Format: float
                  * @description Operator-set rate (0–1); 0 = pass-through to the driver.
                  */
                 operatorMarginRate: number;
-                /** @description deliveryFee − platformShare − operatorMargin. Off-platform. */
+                /** @description deliveryFee − platformInvoice.total − operatorMargin. Off-platform. */
                 driverEarning: number;
             } | null;
         };
@@ -738,7 +765,8 @@ export interface components {
          *     populated — no per-field mixed-null shapes.
          */
         Order: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             status: components["schemas"]["OrderStatus"];
             /**
              * @description Placement surface: `api` = REST create; `hub` = dashboard flow.
@@ -798,23 +826,42 @@ export interface components {
                  */
                 customerPaysDelivery: boolean;
                 /**
-                 * @description Altaer VAT slice on Altaer's fee. 0 in tax-off
-                 *     jurisdictions. Always present so consumers can render a
-                 *     VAT breakdown on live orders without caching the Quote.
+                 * @description Altaer's invoice for THIS order. Self-describing
+                 *     (`billedTo` / `purpose`) so you never need to branch on
+                 *     `fulfillment.kind` to know what the numbers mean.
+                 *
+                 *     - Trusted / platform-network → `billedTo=workspace`,
+                 *       `purpose=delivery`, `subtotal=deliveryFee`,
+                 *       `vat=deliveryVAT`, `total=deliveryFee+deliveryVAT`.
+                 *     - Own-fleet → `billedTo=operator`,
+                 *       `purpose=commission`, `subtotal=commission`,
+                 *       `vat=commissionVAT`,
+                 *       `total=commission+commissionVAT`.
+                 *
+                 *     Zero VAT in tax-off jurisdictions.
                  */
-                vat: {
-                    /** @description 0–1; 0 when tax-off. */
-                    rate: number;
-                    /** @description rate × ex-VAT platform charge. Minor units. */
-                    amount: number;
+                platformInvoice: {
+                    /**
+                     * @description Who owes altaer for this order.
+                     * @enum {string}
+                     */
+                    billedTo: "workspace" | "operator";
+                    /**
+                     * @description What the bill is for.
+                     * @enum {string}
+                     */
+                    purpose: "delivery" | "commission";
+                    /** @description Ex-VAT charge (minor units). */
+                    subtotal: number;
+                    vat: {
+                        /** @description 0–1; 0 when tax-off. */
+                        rate: number;
+                        /** @description rate × subtotal (minor units). */
+                        amount: number;
+                    };
+                    /** @description `subtotal + vat.amount` — the ONE number owed to altaer for this row. */
+                    total: number;
                 };
-                /**
-                 * @description `deliveryFee + vat.amount` — the ONE number owed to
-                 *     Altaer per delivery, uniform across dispatch sources.
-                 *     On fleet dispatch the operator owes it (not you); on
-                 *     platform dispatch you owe it directly.
-                 */
-                platformShare: number;
             };
             /**
              * @description Route + ETAs from the accept-time Routes call. Fields nullable
@@ -837,7 +884,8 @@ export interface components {
             };
             /** @description Driver identity + live signals. Null until a driver accepts. */
             driver: {
-                id: number;
+                /** Format: ulid */
+                id: string;
                 name: string;
                 phoneNumber: string;
                 /** @description Profile photo URL + cache-bust nonce. */
@@ -872,9 +920,11 @@ export interface components {
             } | {
                 /** @enum {string} */
                 kind: "fleet";
-                fleetId: number;
+                /** Format: ulid */
+                fleetId: string;
                 fleetName: string;
-                ownerOperatorId: number;
+                /** Format: ulid */
+                ownerOperatorId: string;
             }) | null;
             /** @description Cancellation context. Null unless `status === "canceled"`. */
             cancellation: {
@@ -917,8 +967,11 @@ export interface components {
                 feeMultiplier: number | null;
                 /** @description `round(deliveryFee × feeMultiplier)` — at-door refusal charge. */
                 feeTotal: number | null;
-                /** @description Non-null = this row IS a return trip; value is the original order id. */
-                originalOrderId: number | null;
+                /**
+                 * Format: ulid
+                 * @description Non-null = this row IS a return trip; value is the original order id.
+                 */
+                originalOrderId: string | null;
             };
             /**
              * @description Present on every terminal outcome (completed / canceled /
@@ -930,7 +983,8 @@ export interface components {
          * @description Price preview — no order created, no dispatch. Fleet-side economics
          *     (operator margin, driver earning, fleet commission split) are
          *     internal to Altaer and NOT exposed on the tenant surface. Tenant
-         *     pays `platformShare` regardless of dispatch source.
+         *     reads `platformInvoice.total` for the one number owed to the
+         *     platform per delivery.
          */
         Quote: {
             /** @description What the customer pays for delivery (minor units). */
@@ -954,19 +1008,43 @@ export interface components {
                  */
                 feeTotal: number | null;
             };
-            /** @description Altaer VAT slice — 0 in tax-off jurisdictions. */
-            vat: {
-                /** @description Altaer VAT rate (0–1). 0 when tax-off. */
-                rate: number;
-                /** @description rate × ex-VAT platform charge. 0 when tax-off. */
-                amount: number;
-            };
             /**
-             * @description Ex-VAT platform charge + VAT — the ONE number you owe the
-             *     platform per delivery, uniform across dispatch sources.
-             *     (Door price = `merchantAmount + deliveryFee`.)
+             * @description Altaer's invoice for THIS delivery. Self-describing
+             *     (`billedTo` / `purpose`) so you never need to branch on
+             *     dispatch mode to know what the numbers mean.
+             *
+             *     - Trusted / platform-network → `billedTo=workspace`,
+             *       `purpose=delivery`, `subtotal=deliveryFee`,
+             *       `vat=deliveryVAT`, `total=deliveryFee+deliveryVAT`.
+             *     - Own-fleet → `billedTo=operator`,
+             *       `purpose=commission`, `subtotal=commission`,
+             *       `vat=commissionVAT`,
+             *       `total=commission+commissionVAT`.
+             *
+             *     Zero VAT in tax-off jurisdictions.
              */
-            platformShare: number;
+            platformInvoice: {
+                /**
+                 * @description Who would owe altaer for this delivery.
+                 * @enum {string}
+                 */
+                billedTo: "workspace" | "operator";
+                /**
+                 * @description What the bill is for.
+                 * @enum {string}
+                 */
+                purpose: "delivery" | "commission";
+                /** @description Ex-VAT charge (minor units). */
+                subtotal: number;
+                vat: {
+                    /** @description 0–1; 0 when tax-off. */
+                    rate: number;
+                    /** @description rate × subtotal (minor units). */
+                    amount: number;
+                };
+                /** @description `subtotal + vat.amount` — the ONE number owed to altaer per delivery. */
+                total: number;
+            };
         };
         OrderListResponse: {
             items: components["schemas"]["Order"][];
@@ -975,10 +1053,15 @@ export interface components {
             offset: number;
         };
         RatingResponse: {
-            id: number;
-            orderId: number;
-            /** @description The driver the rating landed on. */
-            driverId: number;
+            /** Format: ulid */
+            id: string;
+            /** Format: ulid */
+            orderId: string;
+            /**
+             * Format: ulid
+             * @description The driver the rating landed on.
+             */
+            driverId: string;
             /** @enum {string} */
             party: "pickup" | "dropoff";
             stars: number;
@@ -1057,8 +1140,10 @@ export interface components {
          *     workspace — read `breakdown.api` for your slice.
          */
         AltaerBalanceSettledPayload: {
-            settlementId: number;
-            workspaceId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /** Format: ulid */
+            workspaceId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description `collected_from` = you paid the platform; `paid_to` = it
@@ -1099,11 +1184,18 @@ export interface components {
          *     apply it with the OPPOSITE sign so forward + reversal cancel.
          */
         AltaerBalanceReversedPayload: {
-            /** @description ID of the NEW reversal Settlement row. */
-            settlementId: number;
-            /** @description ID of the settle this reverses — the join key. */
-            originalSettlementId: number;
-            workspaceId: number;
+            /**
+             * Format: ulid
+             * @description ID of the NEW reversal Settlement row.
+             */
+            settlementId: string;
+            /**
+             * Format: ulid
+             * @description ID of the settle this reverses — the join key.
+             */
+            originalSettlementId: string;
+            /** Format: ulid */
+            workspaceId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description OPPOSITE of the original settle's total direction.
@@ -1175,9 +1267,12 @@ export interface components {
          *     Slices of one settle share `settlementId` + `provider.ref`.
          */
         AltaerFleetCommissionSettledPayload: {
-            settlementId: number;
-            workspaceId: number;
-            operatorId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /** Format: ulid */
+            workspaceId: string;
+            /** Format: ulid */
+            operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description Operator's POV — forward settles are always `collected_from`
@@ -1212,11 +1307,17 @@ export interface components {
          *     settle. Mirrors the forward fan-out.
          */
         AltaerFleetCommissionReversedPayload: {
-            settlementId: number;
-            /** @description ID of the settled slice this reverses — the join key. */
-            originalSettlementId: number;
-            workspaceId: number;
-            operatorId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /**
+             * Format: ulid
+             * @description ID of the settled slice this reverses — the join key.
+             */
+            originalSettlementId: string;
+            /** Format: ulid */
+            workspaceId: string;
+            /** Format: ulid */
+            operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description OPPOSITE of the original settle's direction.
@@ -1272,9 +1373,12 @@ export interface components {
          *     `initiatedBy` distinguishes which side hit the button.
          */
         OperatorFleetBalanceRecordedPayload: {
-            settlementId: number;
-            workspaceId: number;
-            operatorId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /** Format: ulid */
+            workspaceId: string;
+            /** Format: ulid */
+            operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description Operator's POV.
@@ -1333,10 +1437,14 @@ export interface components {
          *     operator's own workspace.
          */
         FleetDriverBalanceSettledPayload: {
-            settlementId: number;
-            operatorId: number;
-            driverId: number;
-            fleetId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /** Format: ulid */
+            operatorId: string;
+            /** Format: ulid */
+            driverId: string;
+            /** Format: ulid */
+            fleetId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description Operator's POV.
@@ -1364,12 +1472,19 @@ export interface components {
          *     forward via `originalSettlementId`.
          */
         FleetDriverBalanceReversedPayload: {
-            settlementId: number;
-            /** @description ID of the settled row this reverses — the join key. */
-            originalSettlementId: number;
-            operatorId: number;
-            driverId: number;
-            fleetId: number;
+            /** Format: ulid */
+            settlementId: string;
+            /**
+             * Format: ulid
+             * @description ID of the settled row this reverses — the join key.
+             */
+            originalSettlementId: string;
+            /** Format: ulid */
+            operatorId: string;
+            /** Format: ulid */
+            driverId: string;
+            /** Format: ulid */
+            fleetId: string;
             currency: components["schemas"]["Currency"];
             /**
              * @description OPPOSITE of the original settle's direction.
@@ -1396,7 +1511,8 @@ export interface components {
          *     trail) are never exposed on the wire.
          */
         FleetSnapshot: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             name: string;
             /** @description Falls back to `name` when the fleet has no branding name. */
             brandingName: string;
@@ -1405,7 +1521,8 @@ export interface components {
              *     {name} [logo]". Null when the fleet has no logo uploaded.
              */
             brandingLogoUrl?: string | null;
-            ownerOperatorId: number;
+            /** Format: ulid */
+            ownerOperatorId: string;
             /**
              * @description Fleet's operating currency. Tenants pair a workspace with a
              *     fleet whose currency matches — same check the server
@@ -1427,7 +1544,8 @@ export interface components {
             isActive: boolean;
         };
         DriverSnapshot: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             /**
              * @description Grouped identity block. `first` / `last` can each be null
              *     when the driver hasn't set that part (anonymized rows). `full`
@@ -1504,10 +1622,11 @@ export interface components {
                  */
                 note?: string | null;
                 /**
+                 * Format: ulid
                  * @description Opaque Altaer admin id for internal audit correlation.
                  *     Consumers typically ignore this field.
                  */
-                grantedByAdminId?: number | null;
+                grantedByAdminId?: string | null;
             };
         };
         WebhookEnvelopeFleetTrustRevoked: components["schemas"]["WebhookEnvelopeBase"] & {
@@ -1517,7 +1636,8 @@ export interface components {
                 /** Format: date-time */
                 occurredAt: string;
                 fleet: components["schemas"]["FleetSnapshot"];
-                revokedByAdminId?: number | null;
+                /** Format: ulid */
+                revokedByAdminId?: string | null;
             };
         };
         WebhookEnvelopeDriverKyc: components["schemas"]["WebhookEnvelopeBase"] & {
@@ -1600,10 +1720,12 @@ export interface components {
          *     what the workspace owes the platform.
          */
         LedgerEntry: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             currency: components["schemas"]["Currency"];
             type: components["schemas"]["LedgerEntryType"];
-            orderId: number | null;
+            /** Format: ulid */
+            orderId: string | null;
             /** @description Your own order id, echoed back if set on order creation. */
             externalOrderId: string | null;
             amount: components["schemas"]["LedgerEntryAmount"];
@@ -1637,7 +1759,8 @@ export interface components {
          *     the first ever); `period.to` = this row's `createdAt`.
          */
         Settlement: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             currency: components["schemas"]["Currency"];
             /** @description Absolute magnitude, integer minor units. */
             amount: number;
@@ -1682,8 +1805,11 @@ export interface components {
          *     debit).
          */
         SettlementItem: {
-            /** @description Altaer's order id — the join key against your books. */
-            orderId: number;
+            /**
+             * Format: ulid
+             * @description Altaer's order id — the join key against your books.
+             */
+            orderId: string;
             /** @description Your id from order creation. Null for hub-placed orders. */
             externalOrderId?: string | null;
             /**
@@ -1733,7 +1859,8 @@ export interface components {
          *     reconciles standalone.
          */
         Statement: {
-            workspaceId: number;
+            /** Format: ulid */
+            workspaceId: string;
             /** Format: date-time */
             fromDate: string;
             /** Format: date-time */
@@ -1770,7 +1897,8 @@ export interface components {
          *     `apiKeyLast4` is the only key-related field, for display.
          */
         WorkspaceProfile: {
-            id: number;
+            /** Format: ulid */
+            id: string;
             name?: string | null;
             currency: components["schemas"]["Currency"];
             /** @description ISO 3166-1 alpha-2, uppercased. Drives the tax preset. */
@@ -1837,7 +1965,7 @@ export interface components {
                  * @description Optional structured context — shape depends on `code`, key
                  *     omitted when absent. E.g.
                  *     `order/fleet_commission_above_delivery_fee` carries
-                 *     `{ platformShare, deliveryFee }` (integer minor units)
+                 *     `{ platformInvoiceTotal, deliveryFee }` (integer minor units)
                  *     so clients can surface the exact amounts without re-quoting.
                  */
                 data?: {
@@ -1887,7 +2015,7 @@ export interface components {
         };
     };
     parameters: {
-        OrderId: number;
+        OrderId: string;
         /**
          * @description A unique key per logical request. Server caches the response 24h and
          *     replays it on repeats with the same key. Auto-generated by the
@@ -1965,7 +2093,7 @@ export interface operations {
              * @description Validation error, or `order/fleet_commission_above_delivery_fee`:
              *     the fleet's commission + VAT ≥ the delivery fee, so the driver
              *     would earn nothing. Its `data` carries
-             *     `{ platformShare, deliveryFee }` (minor units).
+             *     `{ platformInvoiceTotal, deliveryFee }` (minor units).
              */
             400: {
                 headers: {
@@ -2149,7 +2277,7 @@ export interface operations {
              * @description Validation error, or `order/fleet_commission_above_delivery_fee`:
              *     the fleet's commission + VAT ≥ the delivery fee, so the driver
              *     would earn nothing. Its `data` carries
-             *     `{ platformShare, deliveryFee }` (minor units).
+             *     `{ platformInvoiceTotal, deliveryFee }` (minor units).
              */
             400: {
                 headers: {
@@ -2350,7 +2478,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description Settlement id. */
-                id: number;
+                id: string;
             };
             cookie?: never;
         };

@@ -9,8 +9,8 @@ import { io, type Socket } from 'socket.io-client';
  *  server, sourced from when the driver app last reported the position
  *  (NOT when the platform pushed it) — use it to detect a stale fix. */
 export interface DriverLocationUpdate {
-  orderId: number;
-  driverId: number;
+  orderId: string;
+  driverId: string;
   latitude: number;
   longitude: number;
   at: number;
@@ -55,7 +55,7 @@ export interface SubscribeHandlers {
 /** Handle from `client.tracking.subscribe(...)`. Multiple handles on the same order
  *  share one server-side lease; `unsubscribe()` detaches only this handle. */
 export interface OrderSubscription {
-  readonly orderId: number;
+  readonly orderId: string;
   /** True while handle is attached and the server-side lease is live. */
   readonly active: boolean;
   unsubscribe(): Promise<void>;
@@ -76,7 +76,7 @@ interface ListenerInternal {
 }
 
 interface SubInternal {
-  orderId: number;
+  orderId: string;
   /** Every attached listener, keyed by listener id. One wire subscription fans out to all. */
   listeners: Map<number, ListenerInternal>;
   /** True while the SDK holds a live server-side lease. */
@@ -103,7 +103,7 @@ const TERMINAL_ERROR_CODES: ReadonlySet<string> = new Set([
 
 export class TrackingResource {
   private socket: Socket | null = null;
-  private readonly subs = new Map<number, SubInternal>();
+  private readonly subs = new Map<string, SubInternal>();
   private nextListenerId = 1;
   private readonly baseUrl: string;
   private readonly apiKey: string;
@@ -122,10 +122,10 @@ export class TrackingResource {
    *  holds a live lease (or immediately if already tracked). Multiple calls share
    *  one server-side subscription; each handle detaches only itself. Rejects with
    *  TrackingError on refusal — check `terminal` to know if retrying can succeed. */
-  async subscribe(orderId: number, handlers: SubscribeHandlers = {}): Promise<OrderSubscription> {
-    if (!Number.isInteger(orderId) || orderId <= 0) {
+  async subscribe(orderId: string, handlers: SubscribeHandlers = {}): Promise<OrderSubscription> {
+    if (typeof orderId !== 'string' || orderId.length === 0) {
       throw new Error(
-        `TrackingResource.subscribe: orderId must be a positive integer, got ${orderId}`
+        `TrackingResource.subscribe: orderId must be a non-empty string, got ${orderId}`
       );
     }
 
@@ -338,7 +338,7 @@ export class TrackingResource {
     });
   }
 
-  private async _sendSubscribe(orderId: number): Promise<void> {
+  private async _sendSubscribe(orderId: string): Promise<void> {
     const sub = this.subs.get(orderId);
     if (!sub) return;
 

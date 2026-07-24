@@ -2,6 +2,34 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.33] — 2026-07-24
+
+Contract-shape overhaul. Every entity id is now a **ULID string**, and every ambiguous economics field is replaced with a self-describing `platformInvoice` block. Types are stricter and vocabulary is now consistent between the wire, the SDK, and Altaer's docs.
+
+### Changed
+
+- **All ids are now ULID strings** (`orderId`, `driverId`, `fleetId`, `workspaceId`, `operatorId`, `settlementId`, `originalSettlementId`, `originalOrderId`, `grantedByAdminId`, `revokedByAdminId`, …) — previously mixed `number` / `string`. Time-sortable, URL-safe, 26 characters, Crockford base32. Store as opaque strings.
+- **`Order.payment` carries `platformInvoice: { billedTo, purpose, subtotal, vat: { rate, amount }, total }`** — the ONE number the counterparty owes Altaer per order, self-describing.
+  - `billedTo` = `'workspace'` on trusted / platform-network deliveries (workspace owes delivery + VAT), `'operator'` on own-fleet deliveries (operator owes commission + VAT).
+  - `purpose` = `'delivery'` or `'commission'` accordingly.
+  - Replaces the previous ambiguous `platformShare` field, which meant different things by dispatch mode.
+- **`Quote.platformInvoice`** — same block on the quote preview so integrations know the exact amount owed BEFORE placing the order.
+- **`Order.financials.amounts.platformInvoice`** — same block on the completed-order financials snapshot. Punitive (driver-cancel-post) rows: `subtotal` = recovery amount, `vat.amount` = 0 (no taxable supply).
+- **`Order.fleet.commission.amount` / `commission.rate`** — the ledger commission snapshot moved under a grouped `fleet` block on Order. Same numbers, cleaner shape.
+- **Error payload for `order/fleet_commission_above_delivery_fee`**: `data` now carries `{ platformInvoiceTotal, deliveryFee }` (was `{ platformShare, deliveryFee }`) — matches the new vocabulary.
+
+### Removed
+
+- **`Order.payment.platformShare`** — use `Order.payment.platformInvoice.total` (identical value, self-describing shape).
+- **`Order.payment.vat.platformShare`** — same, now `Order.payment.platformInvoice.total`.
+- **`Quote.platformShare` + `Quote.vat`** — use `Quote.platformInvoice.{total, vat, subtotal}`.
+- **`Order.financials.amounts.platformShare` / `platformFee` / `platformFeeVat`** — use `Order.financials.amounts.platformInvoice.*`.
+
+### Fixed
+
+- **SDK types for reversal webhooks** (`altaer_balance.reversed`, `fleet_driver_balance.settled` / `reversed`) — `settlementId`, `originalSettlementId`, `driverId`, `orderId`, `originalOrderId` now correctly `string` (ULID). They were `number` on 0.0.32 despite the underlying server having migrated — a codegen drift closed here.
+- **`RatingResponse.driverId`** — now `string` (was `number` — same drift).
+
 ## [0.0.31] — 2026-07-23
 
 ### Changed
@@ -48,6 +76,7 @@ Initial public release.
 
 Typed TypeScript client for the [Altaer](https://altaer.app) delivery-dispatch API — create orders, stream live driver GPS, receive signed webhooks, reconcile balances. Full reference at [hub.altaer.app/docs/api](https://hub.altaer.app/docs/api).
 
+[0.0.33]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.33
 [0.0.30]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.30
 [0.0.28]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.28
 [0.0.26]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.26

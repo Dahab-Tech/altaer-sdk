@@ -71,7 +71,7 @@ export class FinanceResource {
 
   /** One settlement plus per-order items tagged by `origin`+`type`. Use for
    *  line-by-line audit when the settle webhook's `breakdown.<origin>` totals aren't enough. */
-  async getSettlement(id: number, opts?: RequestOptions): Promise<SettlementWithItems> {
+  async getSettlement(id: string, opts?: RequestOptions): Promise<SettlementWithItems> {
     return this.http.get<SettlementWithItems>(
       `/api/v1/workspaces/me/finance/settlements/${encodeURIComponent(String(id))}`,
       opts

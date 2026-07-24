@@ -25,7 +25,7 @@ export class OrdersResource {
   /** Fetch the current state of one order. Polling is supported but
    *  webhooks are strongly preferred — they push status changes in
    *  near-real-time with delivery guarantees + signatures. */
-  async get(orderId: number, opts?: RequestOptions): Promise<Order> {
+  async get(orderId: string, opts?: RequestOptions): Promise<Order> {
     return this.http.get<Order>(`/api/v1/workspaces/orders/${orderId}`, opts);
   }
 
@@ -45,14 +45,14 @@ export class OrdersResource {
   /** Cancel an order. `canceledBy` is audit-trail only; `driver`/`system` fall back to `workspace`
    *  (prevents forging driver-cancel penalty). `pickup` rejected post-goods (409).
    *  Pre-pickup is free; post-pickup may charge — see `financials`. Idempotent. */
-  async cancel(orderId: number, input?: CancelOrderInput, opts?: RequestOptions): Promise<Order> {
+  async cancel(orderId: string, input?: CancelOrderInput, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/cancel`, input ?? {}, opts);
   }
 
   /** Send a completed returnable order back (RMA). Creates a linked return
    *  order — addresses reversed, normal dispatch and pricing, workspace-paid
    *  (`merchantAmount: 0`). One live return per original (409 otherwise). */
-  async createReturn(orderId: number, opts?: RequestOptions): Promise<Order> {
+  async createReturn(orderId: string, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/return`, {}, opts);
   }
 
@@ -60,7 +60,7 @@ export class OrdersResource {
    *  same order id stays put; status flips back to `initiated` and the
    *  same dispatch worker runs again. Other statuses return 409
    *  ConflictError. */
-  async redispatch(orderId: number, opts?: RequestOptions): Promise<Order> {
+  async redispatch(orderId: string, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/redispatch`, {}, opts);
   }
 
@@ -74,7 +74,7 @@ export class OrdersResource {
   /** Rate the driver of a delivery. Ratable once `completed` or `canceled` after driver
    *  engagement (409 otherwise). Up to 2 ratings per delivery (pickup/dropoff); repeats overwrite. */
   async rate(
-    orderId: number,
+    orderId: string,
     input: RateOrderInput,
     opts?: RequestOptions
   ): Promise<RatingResponse> {
