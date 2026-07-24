@@ -49,6 +49,13 @@ export class OrdersResource {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/cancel`, input ?? {}, opts);
   }
 
+  /** Send a completed returnable order back (RMA). Creates a linked return
+   *  order — addresses reversed, normal dispatch and pricing, workspace-paid
+   *  (`merchantAmount: 0`). One live return per original (409 otherwise). */
+  async createReturn(orderId: number, opts?: RequestOptions): Promise<Order> {
+    return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/return`, {}, opts);
+  }
+
   /** Re-run dispatch on an order that ended in `noDriverFound`. The
    *  same order id stays put; status flips back to `initiated` and the
    *  same dispatch worker runs again. Other statuses return 409

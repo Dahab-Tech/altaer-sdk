@@ -131,6 +131,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/orders/{orderId}/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orderId: components["parameters"]["OrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a completed returnable order back (RMA)
+         * @description Creates a linked return order for a `completed` order flagged
+         *     `returnable`: addresses reversed, dispatched and priced like
+         *     any new order — the refusal multiplier does NOT apply here (it
+         *     is at-door round-trip compensation only). You pay the delivery
+         *     (`payment.method: 'card'`, nothing collected at either door,
+         *     `payment.merchantAmount: 0` — no merchant money moves, the
+         *     goods just ride back). The new row carries
+         *     `return.originalOrderId` pointing at the original and emits
+         *     `order.created` like any other order.
+         *
+         *     One live return per original: while a linked return can still
+         *     deliver (`initiated` / `onWayToPickUp` / `onWayToDropOff` /
+         *     `noDriverFound`), a second call returns `409` — redispatch the
+         *     existing one instead of creating another.
+         */
+        post: operations["createReturnOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/orders/quote": {
         parameters: {
             query?: never;
@@ -236,9 +271,9 @@ export interface paths {
          *     permanent for that order. `order:unsubscribe` `{ orderId }`
          *     frees the slot.
          *
-         *     **No-code alternative:** every order's public `trackingUrl` is a
+         *     **No-code alternative:** every order's public `tracking.url` is a
          *     live-map share link (no login; inert 24h after the order ends).
-         *     `trackingToken` is the raw token, for serving it from your own
+         *     `tracking.token` is the raw token, for serving it from your own
          *     domain.
          */
         get: operations["trackDriverLocation"];
@@ -498,19 +533,27 @@ export interface components {
         OrderStatus: "initiated" | "noDriverFound" | "onWayToPickUp" | "onWayToDropOff" | "rejected" | "completed" | "canceled" | "failed";
         /** @enum {string} */
         CanceledBy: "driver" | "pickup" | "dropoff" | "workspace" | "system";
-        /** @enum {string} */
-        CancelReasonCode: "workspace_changed_mind" | "workspace_request" | "workspace_unreachable" | "workspace_refused" | "address_issue" | "wrong_items" | "duplicate_order" | "too_long_wait" | "item_unavailable" | "kitchen_closed" | "kitchen_emergency" | "pickup_closed" | "vehicle_breakdown" | "personal_emergency" | "weather" | "driver_unavailable" | "fraud_suspected" | "other";
+        /**
+         * @description `customer_refused` is server-set by the driver refusal flow on
+         *     returnable orders — it cannot be sent on a cancel request.
+         * @enum {string}
+         */
+        CancelReasonCode: "workspace_changed_mind" | "workspace_request" | "workspace_unreachable" | "workspace_refused" | "address_issue" | "wrong_items" | "duplicate_order" | "too_long_wait" | "item_unavailable" | "kitchen_closed" | "kitchen_emergency" | "pickup_closed" | "vehicle_breakdown" | "personal_emergency" | "weather" | "driver_unavailable" | "fraud_suspected" | "customer_refused" | "other";
         /**
          * @description Financial categorization of a terminal event. More granular than
          *     OrderStatus so tenants can distinguish e.g. post-pickup workspace
-         *     cancel from pre-pickup workspace cancel.
+         *     cancel from pre-pickup workspace cancel. `customer_refused` =
+         *     door refusal of returnable goods: service rendered — the closing
+         *     order bills like a post-pickup cancel and a linked return order
+         *     (`return.originalOrderId`) carries the goods back.
          * @enum {string}
          */
-        Outcome: "completed" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "workspace_cancel_pre_pickup" | "workspace_cancel_post_pickup";
-        Destination: {
+        Outcome: "completed" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "workspace_cancel_pre_pickup" | "workspace_cancel_post_pickup" | "customer_refused";
+        /** @description Pickup or dropoff address + contact + coordinates. Same shape for create input and every read. */
+        Waypoint: {
             contactName: string;
             /** @example +201001234567 */
-            contactPhoneNumber: string;
+            contactPhone: string;
             address: string;
             latitude: number;
             longitude: number;
@@ -520,125 +563,130 @@ export interface components {
             additionalInfo?: string | null;
         };
         /**
-         * @description Attached to terminal events — mirror into your ledger. All money
-         *     in integer minor units. `platformInvoiceAmount` is the ONE number
-         *     you owe the platform per delivery, regardless of dispatch source;
-         *     the fleet-only fields are transparency extras.
+         * @description Waypoint on an Order + this waypoint's own lifecycle timestamp.
+         *     `completedAt` = when the driver marked this waypoint's phase done
+         *     (pickup: goods picked up; dropoff: goods delivered).
+         */
+        OrderWaypoint: components["schemas"]["Waypoint"] & {
+            /** Format: date-time */
+            completedAt: string | null;
+        };
+        /**
+         * @description Attached only when the order reaches a financial outcome
+         *     (completed / any post-owed-time cancel / customer_refused).
+         *     Amounts are grouped; the presence of `fleet` (non-null) is the
+         *     discriminator for own-fleet dispatch (platform + trusted-fleet
+         *     emit `fleet: null` — symmetric obscurity).
          */
         OrderFinancials: {
             outcome: components["schemas"]["Outcome"];
+            amounts: {
+                /** @description Workspace-facing delivery fee (minor units). */
+                deliveryFee: number;
+                /** @description Card prepaid total. 0 on cash. */
+                prepaidAmount: number;
+                /** @description Merchant slice + customer-billed delivery. Cash: COD collected at door. */
+                orderTotalAmount: number;
+                /**
+                 * @description Ex-VAT platform charge: `deliveryFee` on platform dispatch,
+                 *     commission on fleet dispatch. 0 on pre-pickup cancels.
+                 */
+                platformFee: number;
+                /**
+                 * @description VAT on `platformFee` — record as input VAT credit. 0 on
+                 *     driver-cancel-post-pickup (failed delivery = no taxable
+                 *     supply).
+                 */
+                platformFeeVat: number;
+                /** @description `platformFee + platformFeeVat` — the counterparty amount per row. */
+                platformShare: number;
+            };
             /**
-             * @description Workspace-facing delivery fee. Platform dispatch: this is
-             *     Altaer's earning. Fleet dispatch: the fleet keeps it and
-             *     owes Altaer only the commission (`platformFee`).
+             * @description Own-fleet dispatch only. `platform` and `trusted` scopes
+             *     emit `null` here (cross-operator identities never cross the
+             *     ledger). All money in minor units.
              */
-            deliveryFee: number;
-            /** @description Workspace's prepaid online total (card). 0 for cash. */
-            prepaidAmount: number;
-            /**
-             * @description Order total: merchant slice + customer-billed delivery.
-             *     Cash: the COD collected at the door. Card: equals
-             *     `prepaidAmount` (paid online).
-             */
-            orderTotalAmount: number;
-            /**
-             * @description `platform` = the Altaer network; `fleet` = your operator's
-             *     own fleet (the fleet-only fields are present).
-             * @enum {string}
-             */
-            dispatchSource?: "platform" | "fleet";
-            /**
-             * @description Altaer's charge for this delivery, ex-VAT: `deliveryFee` on
-             *     platform dispatch, the commission on fleet dispatch.
-             */
-            platformFee?: number;
-            /**
-             * @description VAT on `platformFee` — record as input VAT credit. 0 on
-             *     driver-cancel-post-pickup (failed delivery = no taxable
-             *     supply).
-             */
-            platformFeeVat?: number;
-            /**
-             * @description `platformFee + platformFeeVat` — the single number your
-             *     ledger is debited by.
-             */
-            platformInvoiceAmount?: number;
-            /**
-             * Format: float
-             * @description Fleet-only (omitted otherwise). Effective rate =
-             *     `platformFee / deliveryFee`. Informational.
-             */
-            platformCommissionRate?: number;
-            /**
-             * @description Fleet-only (omitted otherwise). Operator's cut =
-             *     `(deliveryFee − platformInvoiceAmount) × operatorMarginRate`.
-             */
-            operatorMargin?: number;
-            /**
-             * Format: float
-             * @description Fleet-only (omitted otherwise). Operator-set rate (0–1);
-             *     0 = pass-through to the driver.
-             */
-            operatorMarginRate?: number;
-            /**
-             * @description Fleet-only (omitted otherwise). Driver take-home =
-             *     `deliveryFee − platformInvoiceAmount − operatorMargin`. Paid
-             *     off-platform by the operator; Altaer records, never moves it.
-             */
-            driverEarning?: number;
+            fleet: {
+                /**
+                 * Format: float
+                 * @description Effective rate = platformFee / deliveryFee (informational).
+                 */
+                commissionRate: number;
+                /** @description (deliveryFee − platformShare) × operatorMarginRate. */
+                operatorMargin: number;
+                /**
+                 * Format: float
+                 * @description Operator-set rate (0–1); 0 = pass-through to the driver.
+                 */
+                operatorMarginRate: number;
+                /** @description deliveryFee − platformShare − operatorMargin. Off-platform. */
+                driverEarning: number;
+            } | null;
         };
         OrderCreate: {
-            /**
-             * @description Opaque merchant slice — goods, tips, your own VAT, all baked
-             *     in; Altaer never decomposes it. Integer minor units.
-             */
-            merchantAmount: number;
-            /**
-             * @description `false` = you absorb the delivery fee: the customer pays
-             *     `merchantAmount` only and the fee lands on your settle tab.
-             * @default true
-             */
-            customerPaysDelivery: boolean;
-            paymentMethod: components["schemas"]["PaymentMethod"];
             /**
              * @description Your own order id (e.g. `ORD-1234`). Stamped on every webhook
              *     event and ledger entry so you can reconcile to your books.
              */
-            externalOrderId?: string;
-            pickUpData: components["schemas"]["Destination"];
-            dropOffData: components["schemas"]["Destination"];
+            externalId?: string;
+            pickup: components["schemas"]["Waypoint"];
+            dropoff: components["schemas"]["Waypoint"];
+            payment: {
+                method: components["schemas"]["PaymentMethod"];
+                /**
+                 * @description Opaque merchant slice — goods, tips, your own VAT, all baked
+                 *     in; Altaer never decomposes it. Integer minor units.
+                 */
+                merchantAmount: number;
+                /**
+                 * @description `false` = you absorb the delivery fee: the customer pays
+                 *     `merchantAmount` only and the fee lands on your settle tab.
+                 * @default true
+                 */
+                customerPaysDelivery: boolean;
+            };
             /**
-             * @description Platform-dispatch-only: the driver buys the goods at pickup with their
-             *     own cash, then collects goods cost + delivery fee at
-             *     dropoff. Goods money stays off Altaer's ledger. Rejected on
-             *     fleet-routed workspaces.
+             * @description Presence of this block enables buy-at-pickup: the driver buys
+             *     the goods at pickup with their own cash, then collects goods
+             *     cost + delivery fee at dropoff. Goods money stays off
+             *     Altaer's ledger. Platform-dispatch only; rejected on
+             *     fleet-locked workspaces. Incompatible with `returnable: true`.
              *
-             *     When `true`: `paymentMethod` must be `cash`,
-             *     `merchantAmount` must be `0`, and
-             *     `buyAtPickupEstimateToPay` must be `> 0`.
+             *     When set: `payment.method` must be `cash` and
+             *     `payment.merchantAmount` must be `0`.
+             */
+            buyAtPickup?: {
+                /**
+                 * @description Hint shown to the driver: expected spend at pickup (minor
+                 *     units). Never in ledger math.
+                 */
+                estimateToPay: number;
+            };
+            /**
+             * @description Goods the dropoff customer may refuse at the door (try-on
+             *     items, possibly-wrong goods). On refusal the driver carries
+             *     the goods straight back on a linked return order and the
+             *     customer owes `deliveryFee × return.feeMultiplier` for the
+             *     round trip. Also unlocks
+             *     `POST /orders/{orderId}/return` after completion.
+             *     Incompatible with `buyAtPickup`.
              * @default false
              */
-            isBuyAtPickup: boolean;
-            /**
-             * @description Hint shown to the driver: expected spend at pickup (minor
-             *     units). Never in ledger math. Required with
-             *     `isBuyAtPickup: true`; rejected without it.
-             */
-            buyAtPickupEstimateToPay?: number;
+            returnable: boolean;
             /**
              * @description **Sandbox only.** A robot driver walks the order through the
              *     named lifecycle, firing every webhook, financial snapshot,
-             *     and the closing `settlement.*` webhook. Works on both
-             *     platform- and fleet-routed workspaces. `400` in the live
+             *     and the closing `settlement.*` webhook. `400` in the live
              *     environment.
              *
-             *     `random` picks one of the four concrete scenarios uniformly
-             *     at dispatch time; the resolved choice is written back to
-             *     `order.simulation` so the terminal webhook / GET reveals
-             *     which one actually ran.
+             *     `random` picks one of the concrete scenarios uniformly at
+             *     dispatch time (never `customer_refused_return` — that one
+             *     must be named and requires `returnable: true`); the
+             *     resolved choice is written back to `order.simulation` so
+             *     the terminal webhook / GET reveals which one actually ran.
              * @enum {string}
              */
-            simulation?: "complete" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "no_driver_found" | "random";
+            simulation?: "complete" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "no_driver_found" | "customer_refused_return" | "random";
         };
         CancelOrderRequest: {
             cancelReasonCode?: components["schemas"]["CancelReasonCode"];
@@ -662,11 +710,11 @@ export interface components {
             canceledBy?: "pickup" | "dropoff" | "workspace";
         };
         QuoteRequest: {
-            pickUp: {
+            pickup: {
                 latitude: number;
                 longitude: number;
             };
-            dropOff: {
+            dropoff: {
                 latitude: number;
                 longitude: number;
             };
@@ -677,131 +725,148 @@ export interface components {
             stars: number;
             comment?: string;
         };
+        /**
+         * @description Canonical tenant-facing order shape. One presenter output across
+         *     `GET /orders/{id}`, `GET /orders` (list — minus `financials`),
+         *     and every `order.*` webhook payload.
+         *
+         *     Fields are grouped into atomic blocks (`pickup`, `dropoff`,
+         *     `payment`, `route`, `driver`, `fulfillment`, `cancellation`,
+         *     `return`, `buyAtPickup`, `tracking`). Nullable blocks
+         *     (`driver`, `fulfillment`, `cancellation`, `buyAtPickup`,
+         *     `tracking`) are either wholly absent (`null`) or fully
+         *     populated — no per-field mixed-null shapes.
+         */
         Order: {
             id: number;
-            currency: components["schemas"]["Currency"];
-            /** @enum {string} */
-            origin: "api" | "hub";
-            externalOrderId?: string | null;
+            status: components["schemas"]["OrderStatus"];
             /**
-             * @description **Sandbox only.** The scenario that actually ran. Echo of the
-             *     create request in most cases; when create requested
+             * @description Placement surface: `api` = REST create; `hub` = dashboard flow.
+             * @enum {string}
+             */
+            origin: "api" | "hub";
+            /** @description Echo of your create-time `externalId` (if provided). */
+            externalId: string | null;
+            currency: components["schemas"]["Currency"];
+            /** Format: date-time */
+            createdAt: string | null;
+            /** Format: date-time */
+            updatedAt: string | null;
+            /**
+             * @description **Sandbox only.** The scenario that actually ran. Echo of
+             *     the create request in most cases; when create requested
              *     `random`, this holds the concrete choice the server made.
              *     Omitted on every live order.
              * @enum {string}
              */
-            simulation?: "complete" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "no_driver_found" | "random";
-            status: components["schemas"]["OrderStatus"];
-            driverId: number | null;
-            driverName: string | null;
-            driverPhoneNumber: string | null;
-            driverImage: string | null;
+            simulation?: "complete" | "driver_cancel_pre_pickup" | "driver_cancel_post_pickup" | "no_driver_found" | "customer_refused_return" | "random";
             /**
-             * @description Cache-busting nonce for the driver's profile photo — bumped
-             *     each re-upload. Combine with `driverImage` to build a stable
-             *     image URL that busts on change.
+             * @description Where the driver picks up the goods. `pickup.completedAt` is
+             *     when the driver marked pickup done (was `pickedUpAt`).
              */
-            driverProfilePictureNonce: string | null;
+            pickup: components["schemas"]["OrderWaypoint"];
             /**
-             * @description Driver's blended rating across all deliveries (0–5). Null
-             *     until they've been rated.
+             * @description Where the driver delivers the goods. `dropoff.completedAt` is
+             *     when the driver marked delivery done (was `completedAt`).
              */
-            driverRatingAvg: number | null;
-            /** @description Number of rated deliveries behind `driverRatingAvg`. */
-            driverRatingCount: number | null;
-            /** @description Driver's last-known location. Null until accept. */
-            currentLocation: {
-                latitude?: number;
-                longitude?: number;
+            dropoff: components["schemas"]["OrderWaypoint"];
+            payment: {
+                /**
+                 * @description `card` = customer prepaid online via your PSP (mirrors
+                 *     `prepaidAmount`); `cash` = driver collects `totalAmount`
+                 *     at the door.
+                 */
+                method: components["schemas"]["PaymentMethod"];
+                /**
+                 * @description Opaque merchant slice (goods + your own tax/tips baked
+                 *     in). Altaer never decomposes. Minor units.
+                 */
+                merchantAmount: number;
+                /** @description Delivery fee (minor units). */
+                deliveryFee: number;
+                /**
+                 * @description Customer-facing total. Cash: what the driver collects at
+                 *     the door. Card: what your PSP charged (equals
+                 *     `prepaidAmount`). Minor units.
+                 */
+                totalAmount: number;
+                /** @description Prepaid online total. Mirrors `totalAmount` on card; 0 on cash COD. */
+                prepaidAmount: number;
+                /**
+                 * @description Whether the customer was charged for delivery. When
+                 *     false, you absorbed the fee — `totalAmount` excludes it.
+                 */
+                customerPaysDelivery: boolean;
+                /**
+                 * @description Altaer VAT slice on Altaer's fee. 0 in tax-off
+                 *     jurisdictions. Always present so consumers can render a
+                 *     VAT breakdown on live orders without caching the Quote.
+                 */
+                vat: {
+                    /** @description 0–1; 0 when tax-off. */
+                    rate: number;
+                    /** @description rate × ex-VAT platform charge. Minor units. */
+                    amount: number;
+                };
+                /**
+                 * @description `deliveryFee + vat.amount` — the ONE number owed to
+                 *     Altaer per delivery, uniform across dispatch sources.
+                 *     On fleet dispatch the operator owes it (not you); on
+                 *     platform dispatch you owe it directly.
+                 */
+                platformShare: number;
+            };
+            /**
+             * @description Route + ETAs from the accept-time Routes call. Fields nullable
+             *     until the driver accepts (server falls back to a server-side
+             *     Routes call if the driver client omits).
+             */
+            route: {
+                /**
+                 * @description Road-snapped planned route distance in metres
+                 *     (driver→pickup→dropoff).
+                 */
+                distanceMeters: number | null;
+                /** Format: date-time */
+                etaPickupAt: string | null;
+                /**
+                 * Format: date-time
+                 * @description Frozen at accept; re-anchored at pickup-mark.
+                 */
+                etaDropoffAt: string | null;
+            };
+            /** @description Driver identity + live signals. Null until a driver accepts. */
+            driver: {
+                id: number;
+                name: string;
+                phoneNumber: string;
+                /** @description Profile photo URL + cache-bust nonce. */
+                image: {
+                    url: string;
+                    version: string | null;
+                };
+                /** @description Blended 0..5 rating. `average` null when `count` is 0. */
+                rating: {
+                    average: number | null;
+                    count: number;
+                };
+                /** @description Last known GPS. Null until the location task emits. */
+                currentLocation: {
+                    latitude: number;
+                    longitude: number;
+                } | null;
+                /**
+                 * @description Seconds the location task was unreachable during the trip
+                 *     (accept → terminal). SLA signal — 0 on a healthy trip.
+                 */
+                offlineSeconds: number;
             } | null;
-            /** @description Where the driver picks up the goods. */
-            pickUpData: components["schemas"]["Destination"];
-            /** @description Where the driver delivers the goods. */
-            dropOffData: components["schemas"]["Destination"];
             /**
-             * @description `card` = customer prepaid online via your PSP (mirrors
-             *     `prepaidAmount`); `cash` = driver collects `totalAmount` at
-             *     the door.
+             * @description Who fulfilled the delivery — discriminate on `kind`. Null
+             *     while unassigned. `platform` = the Altaer network (open
+             *     dispatch or trusted-fleet — symmetric obscurity).
              */
-            paymentMethod: components["schemas"]["PaymentMethod"];
-            /**
-             * @description Opaque merchant slice (goods + your own tax/tips baked in).
-             *     Altaer never decomposes it. Minor units.
-             */
-            merchantAmount: number;
-            /**
-             * @description Customer-facing total. Cash: what the driver collects at
-             *     the door. Card: what your PSP charged (equals
-             *     `prepaidAmount`). Minor units.
-             */
-            totalAmount: number;
-            /**
-             * @description Prepaid online total. Mirrors `totalAmount` on card orders.
-             *     Null on cash COD.
-             */
-            prepaidAmount?: number | null;
-            /**
-             * @description Whether the customer was charged for delivery on this order.
-             *     When false, you absorbed the delivery fee — customer-facing
-             *     `totalAmount` excludes delivery + Altaer VAT.
-             */
-            customerPaysDelivery: boolean;
-            /** @description Delivery fee snapshot (minor units). Absent pre-quote. */
-            deliveryFee?: number;
-            /** Format: date-time */
-            createdAt?: string | null;
-            /** Format: date-time */
-            updatedAt?: string | null;
-            /**
-             * Format: date-time
-             * @description Server wall-clock at pickup-mark. Null pre-pickup.
-             */
-            pickedUpAt?: string | null;
-            /**
-             * Format: date-time
-             * @description Server wall-clock at delivery-mark. Null pre-terminal.
-             */
-            completedAt?: string | null;
-            canceledBy?: components["schemas"]["CanceledBy"];
-            cancelReason?: string;
-            cancelReasonCode?: components["schemas"]["CancelReasonCode"];
-            /** Format: date-time */
-            etaPickupAt?: string | null;
-            /** Format: date-time */
-            etaDropoffAt?: string | null;
-            /**
-             * @description Road-snapped planned route distance in metres
-             *     (driver→pickup→dropoff). Captured at accept-time from the
-             *     Routes API. Null on rows that never reached accept.
-             */
-            routeDistanceMeters?: number | null;
-            /**
-             * @description Seconds the driver's foreground-location task was
-             *     unreachable during the trip (accept → terminal). SLA signal
-             *     — 0 on a healthy trip.
-             */
-            driverOfflineSeconds?: number | null;
-            /**
-             * @description Public live-map share link for the end customer (no auth).
-             *     Null only on legacy orders without tracking tokens.
-             */
-            trackingUrl?: string | null;
-            /**
-             * @description Raw token behind `trackingUrl` — build your own link or
-             *     embed the view.
-             */
-            trackingToken?: string | null;
-            /**
-             * @description Present on every terminal outcome (completed / canceled) —
-             *     `outcome` says whether money moved. Absent in-flight and on
-             *     list rows.
-             */
-            financials?: components["schemas"]["OrderFinancials"];
-            /**
-             * @description Who fulfilled the delivery — discriminate on `kind`
-             *     (`platform` / `fleet`). Null while unassigned.
-             */
-            fulfilledBy?: ({
+            fulfillment: ({
                 /** @enum {string} */
                 kind: "platform";
             } | {
@@ -811,94 +876,97 @@ export interface components {
                 fleetName: string;
                 ownerOperatorId: number;
             }) | null;
+            /** @description Cancellation context. Null unless `status === "canceled"`. */
+            cancellation: {
+                by: components["schemas"]["CanceledBy"];
+                reason: string | null;
+                code: components["schemas"]["CancelReasonCode"] | null;
+            } | null;
+            /** @description Buy-at-pickup block. Null unless enabled at create. */
+            buyAtPickup: {
+                /** @description Driver spend estimate at pickup (minor units). Informational. */
+                estimateToPay: number;
+                /** @description Driver-recorded actual spend. Null until recorded. */
+                paidByDriver: number | null;
+                /** @description Short-lived signed URL for the pickup receipt photo. */
+                receipt: {
+                    url: string;
+                    version: string;
+                } | null;
+            } | null;
             /**
-             * @description Echo of the create-time flag: the driver buys the goods at
-             *     pickup, collects goods + delivery at dropoff. Goods money is
-             *     off Altaer's ledger. Always present (false when not used).
+             * @description Public live-map share link. Inert 24h after terminal.
+             *     `token` is the raw share secret behind `url` — the tracking
+             *     socket needs it for auth (URL for humans, token for
+             *     machines).
              */
-            isBuyAtPickup: boolean;
+            tracking: {
+                url: string;
+                token: string;
+            } | null;
             /**
-             * @description Expected driver spend at pickup (minor units).
-             *     Informational. Null on non-buy-at-pickup orders.
+             * @description Returnable-goods contract (always present so consumers read
+             *     `.returnable` without a null check). `originalOrderId`
+             *     non-null marks THIS row as a return trip carrying goods
+             *     back to the merchant.
              */
-            buyAtPickupEstimateToPay?: number | null;
+            return: {
+                /** @description Echo of the create-time flag. */
+                returnable: boolean;
+                /** @description Refusal-multiplier snapshot at create (e.g. 1.5). Null when non-returnable. */
+                feeMultiplier: number | null;
+                /** @description `round(deliveryFee × feeMultiplier)` — at-door refusal charge. */
+                feeTotal: number | null;
+                /** @description Non-null = this row IS a return trip; value is the original order id. */
+                originalOrderId: number | null;
+            };
             /**
-             * @description What the driver actually paid, recorded in the driver app.
-             *     Audit only. Null until recorded.
+             * @description Present on every terminal outcome (completed / canceled /
+             *     customer_refused). Absent in-flight and on list rows.
              */
-            buyAtPickupPaidByDriver?: number | null;
-            /**
-             * @description Signed URL for the driver's pickup-receipt photo. Short-
-             *     lived (refresh the URL by refetching the order). Null when
-             *     no receipt was uploaded.
-             */
-            buyAtPickupReceiptUrl?: string | null;
+            financials?: components["schemas"]["OrderFinancials"];
         };
+        /**
+         * @description Price preview — no order created, no dispatch. Fleet-side economics
+         *     (operator margin, driver earning, fleet commission split) are
+         *     internal to Altaer and NOT exposed on the tenant surface. Tenant
+         *     pays `platformShare` regardless of dispatch source.
+         */
         Quote: {
-            /**
-             * @description What the end customer pays for delivery (minor units).
-             *     Platform dispatch: Altaer earns it all. Fleet dispatch: the
-             *     fleet keeps most; Altaer takes the commission.
-             */
+            /** @description What the customer pays for delivery (minor units). */
             deliveryFee: number;
             currency: components["schemas"]["Currency"];
-            /** @description Pickup→dropoff distance in kilometers (2 decimals). */
+            /** @description Pickup→dropoff route distance in kilometers (2 decimals). */
             distanceKm: number;
             /**
-             * @description Altaer's VAT rate (0–1) from your jurisdiction. 0 when
-             *     tax-off.
+             * @description Estimated driving minutes for the route (1 decimal). `null`
+             *     when road routing was unavailable — the per-minute term is
+             *     skipped in that case.
              */
-            platformVatRate?: number;
+            durationMin: number | null;
+            /** @description Refusal round-trip contract that would apply if the order were created as returnable. */
+            return: {
+                /** @description Multiplier a returnable order would snapshot (e.g. 1.5). */
+                feeMultiplier: number | null;
+                /**
+                 * @description `round(deliveryFee × feeMultiplier)` — at-door refusal
+                 *     charge (minor units). Advisory disclosure.
+                 */
+                feeTotal: number | null;
+            };
+            /** @description Altaer VAT slice — 0 in tax-off jurisdictions. */
+            vat: {
+                /** @description Altaer VAT rate (0–1). 0 when tax-off. */
+                rate: number;
+                /** @description rate × ex-VAT platform charge. 0 when tax-off. */
+                amount: number;
+            };
             /**
-             * @description Altaer's earn, ex-VAT: `deliveryFee` on platform dispatch,
-             *     the commission on fleet dispatch.
+             * @description Ex-VAT platform charge + VAT — the ONE number you owe the
+             *     platform per delivery, uniform across dispatch sources.
+             *     (Door price = `merchantAmount + deliveryFee`.)
              */
-            platformFee?: number;
-            /**
-             * @description VAT on `platformFee`. `0` when platform VAT is off in your
-             *     jurisdiction.
-             */
-            platformFeeVat?: number;
-            /**
-             * @description `platformFee + platformFeeVat`. Platform dispatch: you owe
-             *     this to Altaer. Fleet dispatch: the operator owes it, and
-             *     you owe the operator `deliveryFee`. (Door price =
-             *     `merchantAmount + deliveryFee`.)
-             */
-            platformInvoiceAmount?: number;
-            /**
-             * @description `platform` = the Altaer network; `fleet` = your operator's
-             *     own fleet (the FLEET-only fields below are populated).
-             * @enum {string}
-             */
-            dispatchSource?: "platform" | "fleet";
-            /**
-             * @description FLEET-only. Effective rate = `platformFee / deliveryFee`;
-             *     informational — `commissionFixedAmount` is the source of
-             *     truth.
-             */
-            platformCommissionRate?: number;
-            /**
-             * @description FLEET-only. Flat commission per delivery (minor units) —
-             *     source of truth for fleet commission.
-             */
-            commissionFixedAmount?: number;
-            /**
-             * @description FLEET-only. Operator's cut =
-             *     `(deliveryFee − platformInvoiceAmount) × operatorMarginRate`.
-             */
-            operatorMargin?: number;
-            /**
-             * @description FLEET-only. Operator-set rate (0–1); 0 = pass-through to
-             *     the driver.
-             */
-            operatorMarginRate?: number;
-            /**
-             * @description FLEET-only. Driver take-home =
-             *     `deliveryFee − platformInvoiceAmount − operatorMargin`,
-             *     settled off-platform.
-             */
-            driverEarning?: number;
+            platformShare: number;
         };
         OrderListResponse: {
             items: components["schemas"]["Order"][];
@@ -963,6 +1031,28 @@ export interface components {
             unknown: number;
         };
         /**
+         * @description Rail/channel that moved the money — same shape returned on the
+         *     Settlement row.
+         */
+        SettlementProviderWire: {
+            /**
+             * @description Channel that moved the money — an open string; new PSP
+             *     integrations add labels. Common: `manual_cash`,
+             *     `stripe_checkout`, `paymob_checkout`, `paymob_disburse`,
+             *     `stripe_transfer`, or a saved-method kind (`card`,
+             *     `instapay`, `vodafone_cash`, `fawry_pay`).
+             */
+            method: string | null;
+            /** @description PSP reference. Null for manual_cash. */
+            ref: string | null;
+        };
+        /** @description Signed balance snapshot before/after the settle (minor units). */
+        SettlementAmountsWire: {
+            balanceBefore: number;
+            /** @description Residual balance after the settle — 0 on a full settle. */
+            balanceAfter: number;
+        };
+        /**
          * @description Settle of your delivery balance with Altaer. One shape for every
          *     workspace — read `breakdown.api` for your slice.
          */
@@ -977,15 +1067,7 @@ export interface components {
              * @enum {string}
              */
             direction: "collected_from" | "paid_to";
-            /**
-             * @description Channel that moved the money — an open string; new PSP
-             *     integrations add labels. Common: `manual_cash`,
-             *     `stripe_checkout`, `paymob_checkout`, `paymob_disburse`,
-             *     `stripe_transfer`, or a saved-method kind (`card`,
-             *     `instapay`, `vodafone_cash`, `fawry_pay`).
-             */
-            method?: string | null;
-            providerRef?: string | null;
+            provider: components["schemas"]["SettlementProviderWire"];
             /** Format: date-time */
             paidAt: string;
             note?: string | null;
@@ -995,9 +1077,7 @@ export interface components {
              */
             amount: number;
             breakdown: components["schemas"]["OriginBreakdown"];
-            balanceBefore: number;
-            /** @description Residual balance after the settle — 0 on a full settle. */
-            balanceAfter: number;
+            amounts: components["schemas"]["SettlementAmountsWire"];
             period: {
                 /** Format: date-time */
                 from?: string | null;
@@ -1042,14 +1122,13 @@ export interface components {
              */
             breakdown: components["schemas"]["OriginBreakdown"];
             /**
-             * @description Reversal channel (open string): `stripe_refund`,
+             * @description Reversal channel. `provider.method` values: `stripe_refund`,
              *     `stripe_transfer_reversal`, `stripe_dispute`,
              *     `stripe_dispute_won`, `paymob_refund`, or
              *     `paymob_payout_failed` (payout bounced after clearing —
              *     your obligation re-opens).
              */
-            method?: string | null;
-            providerRef?: string | null;
+            provider: components["schemas"]["SettlementProviderWire"];
             originalProviderRef?: string | null;
             reason: string;
             /** Format: date-time */
@@ -1066,8 +1145,34 @@ export interface components {
             data: components["schemas"]["AltaerFleetCommissionSettledPayload"];
         };
         /**
+         * @description Rail block for commission events — method is a fixed enum
+         *     (`cash` reserved for a future manual path; `psp` today).
+         */
+        CommissionProviderWire: {
+            /**
+             * @description `psp` = "Settle now" via saved card; `cash` reserved for a
+             *     future manual path.
+             * @enum {string}
+             */
+            method: "cash" | "psp";
+            ref: string | null;
+        };
+        /**
+         * @description Fan-out signed balance snapshot — commission fan-outs always
+         *     settle a workspace's full slice, so balanceAfter is 0.
+         */
+        CommissionAmountsWire: {
+            /** @description Your slice of the operator's debt before the settle — always negative. */
+            balanceBefore: number;
+            /**
+             * @description Always 0 — slices always settle in full.
+             * @enum {integer}
+             */
+            balanceAfter: 0;
+        };
+        /**
          * @description Your workspace's slice of an operator's commission settle.
-         *     Slices of one settle share `settlementId` + `providerRef`.
+         *     Slices of one settle share `settlementId` + `provider.ref`.
          */
         AltaerFleetCommissionSettledPayload: {
             settlementId: number;
@@ -1081,23 +1186,11 @@ export interface components {
              * @enum {string}
              */
             direction: "paid_to" | "collected_from";
-            /**
-             * @description `psp` = "Settle now" via saved card; `cash` reserved for a
-             *     future manual path.
-             * @enum {string}
-             */
-            method: "cash" | "psp";
-            providerRef?: string | null;
+            provider: components["schemas"]["CommissionProviderWire"];
             note?: string | null;
             /** @description Your slice of the operator's total settle (minor units). */
             amount: number;
-            /** @description Your slice of the operator's debt before the settle — always negative. */
-            balanceBefore: number;
-            /**
-             * @description Always 0 — slices always settle in full.
-             * @enum {integer}
-             */
-            balanceAfter: 0;
+            amounts: components["schemas"]["CommissionAmountsWire"];
             /** Format: date-time */
             paidAt: string;
             /**
@@ -1132,8 +1225,7 @@ export interface components {
             direction: "paid_to" | "collected_from";
             /** @description Your slice of the reversal (minor units); can be < the original on partial refund. */
             amount: number;
-            method?: string | null;
-            providerRef?: string | null;
+            provider: components["schemas"]["SettlementProviderWire"];
             originalProviderRef?: string | null;
             reason: string;
             /** Format: date-time */
@@ -1153,6 +1245,26 @@ export interface components {
             /** @enum {string} */
             type: "workspace.operator_fleet_balance.recorded";
             data: components["schemas"]["OperatorFleetBalanceRecordedPayload"];
+        };
+        /**
+         * @description Method the operator/workspace flagged at submit time — no PSP
+         *     ref because Altaer didn't process the transfer.
+         */
+        OperatorFleetProviderWire: {
+            /**
+             * @description How the off-platform transfer was settled.
+             * @enum {string}
+             */
+            method: "cash" | "psp";
+        };
+        /**
+         * @description Signed workspace-POV balance snapshot: positive = the operator
+         *     owes you; negative = you owe the operator.
+         */
+        OperatorFleetAmountsWire: {
+            balanceBefore: number;
+            /** @description Signed balance after the settle — usually 0; partial is permitted. */
+            balanceAfter: number;
         };
         /**
          * @description Off-platform settle between operator and workspace, record-only
@@ -1176,21 +1288,11 @@ export interface components {
              * @enum {string}
              */
             initiatedBy: "operator" | "workspace";
-            /**
-             * @description How the off-platform transfer was settled.
-             * @enum {string}
-             */
-            method: "cash" | "psp";
+            provider: components["schemas"]["OperatorFleetProviderWire"];
             note?: string | null;
             /** @description Integer minor units, magnitude (always positive). */
             amount: number;
-            /**
-             * @description Signed workspace-POV balance before the settle: positive =
-             *     the operator owes you; negative = you owe the operator.
-             */
-            balanceBefore: number;
-            /** @description Signed balance after the settle — usually 0; partial is permitted. */
-            balanceAfter: number;
+            amounts: components["schemas"]["OperatorFleetAmountsWire"];
             /** Format: date-time */
             paidAt: string;
             /**
@@ -1198,6 +1300,92 @@ export interface components {
              *     integrators read `breakdown.api`. Sign matches `direction`.
              */
             breakdown: components["schemas"]["OriginBreakdown"];
+        };
+        WebhookEnvelopeFleetDriverBalanceSettled: components["schemas"]["WebhookEnvelopeBase"] & {
+            /** @enum {string} */
+            type: "workspace.fleet_driver_balance.settled";
+            data: components["schemas"]["FleetDriverBalanceSettledPayload"];
+        };
+        /**
+         * @description Method the operator flagged at settle-time — no PSP ref because
+         *     driver settles are typically off-platform (cash / operator's own PSP).
+         */
+        FleetDriverProviderWire: {
+            /**
+             * @description `cash` — operator handed cash to / took cash from the driver.
+             *     `psp` — operator used their own PSP (Altaer didn't route it).
+             * @enum {string}
+             */
+            method: "cash" | "psp";
+        };
+        /**
+         * @description Signed operator-POV balance snapshot: positive = operator owed
+         *     the driver; negative = driver owed the operator.
+         */
+        FleetDriverAmountsWire: {
+            balanceBefore: number;
+            /** @description Signed balance after the settle — usually 0; partial permitted. */
+            balanceAfter: number;
+        };
+        /**
+         * @description Operator settled one of their fleet drivers off-platform.
+         *     Record-only — Altaer doesn't move the money. Delivered to the
+         *     operator's own workspace.
+         */
+        FleetDriverBalanceSettledPayload: {
+            settlementId: number;
+            operatorId: number;
+            driverId: number;
+            fleetId: number;
+            currency: components["schemas"]["Currency"];
+            /**
+             * @description Operator's POV.
+             *       • `paid_to` — operator paid driver their outstanding earnings.
+             *       • `collected_from` — operator received cash COD the driver held.
+             * @enum {string}
+             */
+            direction: "paid_to" | "collected_from";
+            provider: components["schemas"]["FleetDriverProviderWire"];
+            /** Format: date-time */
+            paidAt: string;
+            note?: string | null;
+            /** @description Integer minor units, magnitude (always positive). */
+            amount: number;
+            amounts: components["schemas"]["FleetDriverAmountsWire"];
+        };
+        WebhookEnvelopeFleetDriverBalanceReversed: components["schemas"]["WebhookEnvelopeBase"] & {
+            /** @enum {string} */
+            type: "workspace.fleet_driver_balance.reversed";
+            data: components["schemas"]["FleetDriverBalanceReversedPayload"];
+        };
+        /**
+         * @description Reversal of a prior fleet-driver settle. Fires on PSP-driven
+         *     reversal (rare — driver settles are typically cash). Join the
+         *     forward via `originalSettlementId`.
+         */
+        FleetDriverBalanceReversedPayload: {
+            settlementId: number;
+            /** @description ID of the settled row this reverses — the join key. */
+            originalSettlementId: number;
+            operatorId: number;
+            driverId: number;
+            fleetId: number;
+            currency: components["schemas"]["Currency"];
+            /**
+             * @description OPPOSITE of the original settle's direction.
+             * @enum {string}
+             */
+            direction: "paid_to" | "collected_from";
+            /** @description Reversal magnitude (minor units); can be < original on partial refund. */
+            amount: number;
+            provider: components["schemas"]["SettlementProviderWire"];
+            /** @description Original settlement's provider.ref. Null when the original was cash / had no PSP ref. */
+            originalProviderRef?: string | null;
+            reason: string;
+            /** Format: date-time */
+            reversedAt: string;
+            /** Format: date-time */
+            originalPaidAt: string;
         };
         /**
          * @description Public-facing fleet snapshot embedded in every fleet.* webhook.
@@ -1240,8 +1428,17 @@ export interface components {
         };
         DriverSnapshot: {
             id: number;
-            firstName?: string | null;
-            lastName?: string | null;
+            /**
+             * @description Grouped identity block. `first` / `last` can each be null
+             *     when the driver hasn't set that part (anonymized rows). `full`
+             *     is the presenter-composed convenience — trimmed
+             *     "{first} {last}"; empty string when both parts are null.
+             */
+            name: {
+                first: string | null;
+                last: string | null;
+                full: string;
+            };
             phoneNumber?: string | null;
         };
         WebhookEnvelopeFleetCreated: components["schemas"]["WebhookEnvelopeBase"] & {
@@ -1397,34 +1594,42 @@ export interface components {
             lifetimeAltaerVat: number;
         };
         /**
-         * @description One ledger row (minor units of `currency`). Amounts are a
-         *     magnitude + direction pair: `workspaceAmountMinor` is always
-         *     ≥ 0 — sign it per `workspaceDirection`.
+         * @description One ledger row (minor units of `currency`). `amount` is a grouped
+         *     `{ value, direction }` block — `value` is always ≥ 0; `direction`
+         *     says whether the row increases (`debit`) or decreases (`credit`)
+         *     what the workspace owes the platform.
          */
         LedgerEntry: {
             id: number;
             currency: components["schemas"]["Currency"];
             type: components["schemas"]["LedgerEntryType"];
-            orderId?: number | null;
+            orderId: number | null;
             /** @description Your own order id, echoed back if set on order creation. */
-            externalOrderId?: string | null;
-            /** @description Magnitude of the workspace↔platform delta, always ≥ 0. */
-            workspaceAmountMinor: number;
+            externalOrderId: string | null;
+            amount: components["schemas"]["LedgerEntryAmount"];
+            deliveryFee: number | null;
+            prepaidAmount: number | null;
+            orderTotalAmount: number | null;
+            platformFeeVat: number | null;
+            /** @description Set only on cancel-related rows. */
+            canceledBy: string | null;
+            statusBeforeCancel: string | null;
+            note: string | null;
+            /** Format: date-time */
+            createdAt: string | null;
+        };
+        /**
+         * @description Grouped workspace-perspective amount. `value` is always ≥ 0 —
+         *     sign it per `direction` when rolling into a balance.
+         */
+        LedgerEntryAmount: {
+            /** @description Magnitude of the workspace↔platform delta (minor units), always ≥ 0. */
+            value: number;
             /**
-             * @description `workspace_debit` increases what you owe the platform (delivery fee); `workspace_credit` decreases it (COD held for you, adjustments in your favor).
+             * @description `debit` increases what you owe the platform (delivery fee); `credit` decreases it (COD held for you, adjustments in your favor).
              * @enum {string}
              */
-            workspaceDirection: "workspace_debit" | "workspace_credit";
-            deliveryFee?: number | null;
-            prepaidAmount?: number | null;
-            orderTotalAmount?: number | null;
-            platformFeeVat?: number | null;
-            /** @description Set only on cancel-related rows. */
-            canceledBy?: string | null;
-            statusBeforeCancel?: string | null;
-            note?: string | null;
-            /** Format: date-time */
-            createdAt?: string | null;
+            direction: "debit" | "credit";
         };
         /**
          * @description A real-world money movement clearing your balance.
@@ -1437,20 +1642,26 @@ export interface components {
             /** @description Absolute magnitude, integer minor units. */
             amount: number;
             direction: components["schemas"]["SettlementDirection"];
-            /** @description Signed; minor units. */
-            balanceBefore: number;
-            /** @description Signed; typically 0 on full settle. */
-            balanceAfter: number;
-            /** @description Payment/payout channel. Values include `manual_cash`, `stripe_checkout`, `paymob_checkout`, `paymob_disburse`, `stripe_transfer`, `paymob_refund`, `paymob_payout_failed`, or a saved-method kind (`card`, `instapay`, `vodafone_cash`, `fawry_pay`, …). Treat as an open string — new PSP integrations add labels. */
-            method?: string | null;
-            /** @description PSP reference. Null for manual_cash. */
-            providerRef?: string | null;
-            note?: string | null;
+            /** @description Signed balance snapshot before/after this settle (minor units). */
+            amounts: {
+                /** @description Signed; minor units. */
+                balanceBefore: number;
+                /** @description Signed; typically 0 on full settle. */
+                balanceAfter: number;
+            };
+            /** @description Rail/channel that moved the money. */
+            provider: {
+                /** @description Payment/payout channel. Values include `manual_cash`, `stripe_checkout`, `paymob_checkout`, `paymob_disburse`, `stripe_transfer`, `paymob_refund`, `paymob_payout_failed`, or a saved-method kind (`card`, `instapay`, `vodafone_cash`, `fawry_pay`, …). Treat as an open string — new PSP integrations add labels. */
+                method: string | null;
+                /** @description PSP reference. Null for manual_cash. */
+                ref: string | null;
+            };
+            note: string | null;
             /** @description Admin-stamped tags echoed verbatim. Use for batch ids, internal ticket ids, etc. */
-            metadata?: {
+            metadata: {
                 [key: string]: string;
             } | null;
-            period?: {
+            period: {
                 /** Format: date-time */
                 from?: string | null;
                 /** Format: date-time */
@@ -1458,12 +1669,12 @@ export interface components {
             } | null;
             /**
              * @description Per-origin signed slice this settle closes. Sums to
-             *     balanceBefore (full settle) or to ±amount (partial).
+             *     amounts.balanceBefore (full settle) or to ±amount (partial).
              *     Null only on legacy rows pre-dating origin-tagged settles.
              */
-            breakdown?: components["schemas"]["OriginBreakdown"] | null;
+            breakdown: components["schemas"]["OriginBreakdown"] | null;
             /** Format: date-time */
-            createdAt?: string | null;
+            createdAt: string | null;
         };
         /**
          * @description One per-order ledger contribution to a settlement. An order can
@@ -1626,7 +1837,7 @@ export interface components {
                  * @description Optional structured context — shape depends on `code`, key
                  *     omitted when absent. E.g.
                  *     `order/fleet_commission_above_delivery_fee` carries
-                 *     `{ platformInvoiceAmount, deliveryFee }` (integer minor units)
+                 *     `{ platformShare, deliveryFee }` (integer minor units)
                  *     so clients can surface the exact amounts without re-quoting.
                  */
                 data?: {
@@ -1739,8 +1950,8 @@ export interface operations {
         };
         responses: {
             /**
-             * @description Order created, dispatch started. Driver fields stay null until
-             *     assignment; `trackingUrl` is shareable immediately.
+             * @description Order created, dispatch started. The `driver` block stays null
+             *     until assignment; `tracking.url` is shareable immediately.
              */
             201: {
                 headers: {
@@ -1754,7 +1965,7 @@ export interface operations {
              * @description Validation error, or `order/fleet_commission_above_delivery_fee`:
              *     the fleet's commission + VAT ≥ the delivery fee, so the driver
              *     would earn nothing. Its `data` carries
-             *     `{ platformInvoiceAmount, deliveryFee }` (minor units).
+             *     `{ platformShare, deliveryFee }` (minor units).
              */
             400: {
                 headers: {
@@ -1870,6 +2081,48 @@ export interface operations {
             };
         };
     };
+    createReturnOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orderId: components["parameters"]["OrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Return order created and dispatching. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"];
+                };
+            };
+            /** @description Original order is not flagged returnable (`order/not_returnable`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            401: components["responses"]["AuthError"];
+            404: components["responses"]["NotFound"];
+            /** @description Original is not `completed` (`order/return_not_allowed_in_state`), or a live return trip already exists for it (`order/return_already_exists`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getQuote: {
         parameters: {
             query?: never;
@@ -1896,7 +2149,7 @@ export interface operations {
              * @description Validation error, or `order/fleet_commission_above_delivery_fee`:
              *     the fleet's commission + VAT ≥ the delivery fee, so the driver
              *     would earn nothing. Its `data` carries
-             *     `{ platformInvoiceAmount, deliveryFee }` (minor units).
+             *     `{ platformShare, deliveryFee }` (minor units).
              */
             400: {
                 headers: {

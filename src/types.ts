@@ -17,8 +17,25 @@ export type PaymentMethod = Schemas['PaymentMethod'];
 export type OrderStatus = Schemas['OrderStatus'];
 export type CanceledBy = Schemas['CanceledBy'];
 export type CancelReasonCode = Schemas['CancelReasonCode'];
-export type Destination = Schemas['Destination'];
-export type DriverLocation = NonNullable<Schemas['Order']['currentLocation']>;
+/** Pickup / dropoff waypoint — address + contact + coordinates.
+ *  Same shape for create input and every read. */
+export type Waypoint = Schemas['Waypoint'];
+/** Waypoint on an Order — adds `completedAt` (when the driver marked
+ *  this waypoint's phase done: pickup = picked up; dropoff = delivered). */
+export type OrderWaypoint = Schemas['OrderWaypoint'];
+/** Driver's live GPS on `Order.driver.currentLocation`. */
+export type DriverLocation = NonNullable<
+  NonNullable<Schemas['Order']['driver']>['currentLocation']
+>;
+
+/** Terminal outcome on `Order.financials.outcome`. Distinguishes the four
+ *  cancel flavors (pre/post × driver/workspace) plus door refusal from a
+ *  clean completion — narrow on this for outcome-specific handling. */
+export type OrderOutcome = Schemas['Outcome'];
+
+/** Sandbox scenarios accepted by `orders.create({ simulation })` /
+ *  `orders.quote({ simulation })`. Live environment rejects with 400. */
+export type SimulationScenario = NonNullable<Schemas['OrderCreate']['simulation']>;
 
 // ── Requests ─────────────────────────────────────────────────────────
 
@@ -124,9 +141,23 @@ export type RotateCredentialsResponse = Schemas['RotateCredentialsResponse'];
 /** Response of `client.workspace.setWebhookUrl(url)`. */
 export type SetWebhookUrlResponse = Schemas['SetWebhookUrlResponse'];
 
-/** Fulfilment snapshot on `Order.fulfilledBy`. Discriminated on `kind`:
+/** Fulfilment snapshot on `Order.fulfillment`. Discriminated on `kind`:
  *  `'platform'` (Altaer network, no identity exposed) or `'fleet'` (own fleet, carries id/name). */
-export type FulfilledBy = NonNullable<Order['fulfilledBy']>;
+export type Fulfillment = NonNullable<Order['fulfillment']>;
+/** Driver block on `Order.driver` — null pre-assignment. */
+export type OrderDriver = NonNullable<Order['driver']>;
+/** Route + ETAs block on `Order.route`. */
+export type OrderRoute = Order['route'];
+/** Cancellation block on `Order.cancellation` — null unless canceled. */
+export type OrderCancellation = NonNullable<Order['cancellation']>;
+/** Return contract block on `Order.return` — always present. */
+export type OrderReturn = Order['return'];
+/** Buy-at-pickup block on `Order.buyAtPickup` — null unless enabled at create. */
+export type OrderBuyAtPickup = NonNullable<Order['buyAtPickup']>;
+/** Tracking block on `Order.tracking` — public share URL + raw token. */
+export type OrderTracking = NonNullable<Order['tracking']>;
+/** Payment block on `Order.payment` — method + amounts. */
+export type OrderPayment = Order['payment'];
 
 // ── Webhook event union ──────────────────────────────────────────────
 
@@ -152,6 +183,10 @@ export type WebhookEventType =
   // Operator ↔ workspace off-platform settle (record-only — Altaer
   // doesn't move money).
   | 'workspace.operator_fleet_balance.recorded'
+  // Operator ↔ driver fleet-driver settle (record-only). Delivered to
+  // the operator's own workspace so own-fleet integrations see driver payouts.
+  | 'workspace.fleet_driver_balance.settled'
+  | 'workspace.fleet_driver_balance.reversed'
   | 'fleet.created'
   | 'fleet.deleted'
   | 'fleet.driver.added'
@@ -204,6 +239,17 @@ export type AltaerFleetCommissionReversedPayload = Schemas['AltaerFleetCommissio
  *  move money). Either side can record; `initiatedBy` distinguishes. */
 export type OperatorFleetBalanceRecordedPayload = Schemas['OperatorFleetBalanceRecordedPayload'];
 
+// ── Operator ↔ fleet driver settle (off-platform payout / COD collect) ──
+
+/** Operator settled one of their fleet drivers off-platform.
+ *  Record-only — Altaer doesn't move the money. `direction` is
+ *  operator's POV (`paid_to` = payout; `collected_from` = COD collected). */
+export type FleetDriverBalanceSettledPayload = Schemas['FleetDriverBalanceSettledPayload'];
+
+/** Reversal of a prior fleet-driver settle. Rare — driver settles are
+ *  typically cash. Join the forward via `originalSettlementId`. */
+export type FleetDriverBalanceReversedPayload = Schemas['FleetDriverBalanceReversedPayload'];
+
 // Fleet / driver / KYC payloads — extracted from their respective
 // envelopes' `data` shape so partners can annotate variables against
 // the same types the SDK passes to their handlers.
@@ -241,6 +287,8 @@ export type WebhookEvent =
       'workspace.operator_fleet_balance.recorded',
       OperatorFleetBalanceRecordedPayload
     >
+  | WebhookEnvelope<'workspace.fleet_driver_balance.settled', FleetDriverBalanceSettledPayload>
+  | WebhookEnvelope<'workspace.fleet_driver_balance.reversed', FleetDriverBalanceReversedPayload>
   | WebhookEnvelope<'fleet.created', FleetCreatedPayload>
   | WebhookEnvelope<'fleet.deleted', FleetDeletedPayload>
   | WebhookEnvelope<'fleet.driver.added', FleetDriverAddedPayload>

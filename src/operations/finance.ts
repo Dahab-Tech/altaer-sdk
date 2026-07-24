@@ -45,9 +45,10 @@ export class FinanceResource {
     );
   }
 
-  /** Paginated ledger history, newest first. Each row carries `workspaceAmountMinor` +
-   *  `workspaceDirection` (always positive + enum). `workspace_debit` = workspace owes
-   *  more; `workspace_credit` = workspace owes less (or platform owes workspace). */
+  /** Paginated ledger history, newest first. Each row carries a grouped
+   *  `amount: { value, direction }`. `value` is always ≥ 0; `direction`
+   *  is `debit` (workspace owes more) or `credit` (workspace owes less,
+   *  or platform owes workspace). */
   async ledger(input?: FinancePaginationInput, opts?: RequestOptions): Promise<LedgerListResponse> {
     return this.http.get<LedgerListResponse>(
       `/api/v1/workspaces/me/finance/ledger${paginationQs(input)}`,

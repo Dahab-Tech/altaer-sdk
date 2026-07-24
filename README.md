@@ -29,35 +29,52 @@ const al = new AltaerClient({
 });
 
 const order = await al.orders.create({
-  merchantAmount: 5000, // integer minor units
-  paymentMethod: 'cash',
-  customerPaysDelivery: true, // fee rides on the customer's total; false = you absorb it
-  isBuyAtPickup: false,
-  externalOrderId: 'ORD-1234',
-  pickUpData: {
+  externalId: 'ORD-1234', // your own order id, echoed on every payload
+  pickup: {
     contactName: "Mona's Bakery",
-    contactPhoneNumber: '+201001234567',
+    contactPhone: '+201001234567',
     address: '12 El-Tahrir St, Cairo',
     latitude: 30.0444,
     longitude: 31.2357,
   },
-  dropOffData: {
+  dropoff: {
     contactName: 'Ahmed Hassan',
-    contactPhoneNumber: '+201005551234',
+    contactPhone: '+201005551234',
     address: '8 Mohandessin Ave, Giza',
     latitude: 30.0561,
     longitude: 31.2003,
   },
+  payment: {
+    method: 'cash',
+    merchantAmount: 5000, // integer minor units
+    customerPaysDelivery: true, // fee rides on customer's total; false = you absorb it
+  },
+  // buyAtPickup: { estimateToPay: 3500 }, // presence enables buy-at-pickup
+  returnable: false, // true = customer may refuse at the door (see Returns below)
 });
 
-console.log(order.id, order.status, order.trackingUrl);
+console.log(order.id, order.status, order.tracking?.url);
 ```
 
 The full SDK surface:\
-`al.orders.*` (create / get / list / cancel / redispatch / quote / rate)\
+`al.orders.*` (create / get / list / cancel / createReturn / redispatch / quote / rate)\
 `al.finance.*` (balance / summary / overview / ledger / settlements / getSettlement / statement)\
 `al.workspace.*` (getProfile / updateProfile / rotateCredentials / setWebhookUrl)\
 `al.tracking.subscribe()` for live driver GPS.
+
+### Returnable goods
+
+Set `returnable: true` on `orders.create` to enable both refund paths:
+
+- **At-door refusal** (driver-triggered, automatic): the dropoff customer refuses → the original closes with `financials.outcome === 'customer_refused'`, a linked return order (`return.originalOrderId`) is spawned on the same driver at the round-trip premium (`quote.return.feeTotal`). Nothing to call — react to the two webhooks.
+- **RMA / scheduled return** (your call, on a completed order): send the goods back through normal dispatch at 1× pricing, workspace-paid:
+
+  ```ts
+  const returnOrder = await al.orders.createReturn(originalOrderId);
+  console.log(returnOrder.return.originalOrderId); // === originalOrderId
+  ```
+
+  One live return per original — a second call while the first is still in flight throws `ConflictError('order/return_already_exists')`.
 
 ## Webhooks
 
@@ -78,10 +95,20 @@ app.post(
         // narrowed case, not before the switch.
         switch (event.type) {
           case 'order.completed':
-            await markPaid(event.data.id, event.data.financials!.deliveryFee);
+            await markPaid(
+              event.data.id,
+              event.data.financials!.amounts.deliveryFee
+            );
             break;
           case 'order.canceled':
-            await refundIfCharged(event.data.id, event.data.financials);
+            if (event.data.financials?.outcome === 'customer_refused') {
+              // Door refusal: bill was delivery-only (goods didn't move).
+              // A linked `order.created` with `return.originalOrderId` fires next
+              // for the return trip — no separate refusal event.
+              await settleForDelivery(event.data.id, event.data.financials);
+            } else {
+              await refundIfCharged(event.data.id, event.data.financials);
+            }
             break;
           case 'order.no_driver_found':
             await notifyOpsAndRefund(event.data.id);
@@ -183,7 +210,8 @@ Every request sends your API key in the `x-api-key` header — the SDK does this
 | `driver_cancel_pre_pickup` | accept → driver cancels before pickup (no money owed) |
 | `driver_cancel_post_pickup` | accept → picked up → driver cancels (punitive financials) |
 | `no_driver_found` | search exhausts → `order.no_driver_found` webhook |
-| `random` | server picks one of the four above uniformly; the concrete choice is written back to `order.simulation` |
+| `customer_refused_return` | accept → picked up → refused at the door → linked return order (`return.originalOrderId`) delivered back; requires `returnable: true` |
+| `random` | server picks one of the four above uniformly (never `customer_refused_return` — that one must be named); the concrete choice is written back to `order.simulation` |
 
 Works on both platform- and fleet-routed workspaces — the robot inherits the order's dispatch snapshot at create time, so ledger legs and settlements land against the correct accounts. Rejected with `400` in the live environment.
 
