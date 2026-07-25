@@ -2,6 +2,42 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.34] — 2026-07-25
+
+`WorkspaceProfile` restructured into named blocks. Reading `w.tradeName` becomes `w.profile.tradeName`; reading `w.apiKeyLast4` becomes `w.dev.keyLast4`; reading `w.rateLimitPerMin` becomes `w.plan.rateLimitPerMin`. The block names are self-documenting so integrations know at a glance what each field family covers.
+
+### Changed
+
+- **`WorkspaceProfile` is now grouped into three blocks**:
+  - **`profile`** — business identity: `tradeName`, `businessAddress`, `industry`, `logoUrl`, `operatingHours`.
+  - **`dev`** — developer/integration surface: `keyLast4`, `hasKey` (derived), `webhookUrl`, `hasWebhookSecret` (derived).
+  - **`plan`** — subscription: `key`, `rateLimitPerMin`, `maxTrackedOrders`.
+- **`UpdateWorkspaceProfileInput` accepts the same grouped shape** (send `{ profile: { tradeName: '...' } }` instead of `{ tradeName: '...' }`).
+- `hasKey` / `hasWebhookSecret` on `dev` are booleans derived server-side from whether credentials are configured — you never see the hash, only a "yes/no" signal for whether a value is set.
+
+### Removed
+
+- **`WorkspaceProfile.pricing` + the `WorkspacePricing` schema** — the field never had an editor and was always `null` in practice. Delivery pricing resolution is `fleet-custom formula > pickup-zone > per-currency default`; there was no per-workspace tier.
+- Flat top-level fields on `WorkspaceProfile`: `tradeName`, `businessAddress`, `industry`, `logoUrl`, `operatingHours`, `apiKeyLast4`, `webhookUrl`, `plan` (as string), `rateLimitPerMin`, `maxTrackedOrders`. Every one moved into `profile` / `dev` / `plan`.
+
+### Migration
+
+```ts
+// before (0.0.33)
+const profile = await al.workspace.getProfile();
+console.log(profile.tradeName, profile.apiKeyLast4, profile.rateLimitPerMin);
+await al.workspace.updateProfile({ tradeName: 'New Name' });
+
+// after (0.0.34)
+const profile = await al.workspace.getProfile();
+console.log(
+  profile.profile.tradeName,
+  profile.dev.keyLast4,
+  profile.plan.rateLimitPerMin
+);
+await al.workspace.updateProfile({ profile: { tradeName: 'New Name' } });
+```
+
 ## [0.0.33] — 2026-07-24
 
 Contract-shape overhaul. Every entity id is now a **ULID string**, and every ambiguous economics field is replaced with a self-describing `platformInvoice` block. Types are stricter and vocabulary is now consistent between the wire, the SDK, and Altaer's docs.
@@ -76,6 +112,7 @@ Initial public release.
 
 Typed TypeScript client for the [Altaer](https://altaer.app) delivery-dispatch API — create orders, stream live driver GPS, receive signed webhooks, reconcile balances. Full reference at [hub.altaer.app/docs/api](https://hub.altaer.app/docs/api).
 
+[0.0.34]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.34
 [0.0.33]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.33
 [0.0.30]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.30
 [0.0.28]: https://github.com/Dahab-Tech/altaer-sdk/releases/tag/v0.0.28

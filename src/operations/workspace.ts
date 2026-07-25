@@ -12,7 +12,7 @@ export class WorkspaceResource {
   constructor(private readonly http: HttpClient) {}
 
   /** Fetch your workspace profile — the workspace your API key belongs
-   *  to. Secrets are never returned; `apiKeyLast4` lets you confirm
+   *  to. Secrets are never returned; `dev.keyLast4` lets you confirm
    *  which key the integration holds. */
   async getProfile(opts?: RequestOptions): Promise<WorkspaceProfile> {
     return this.http.get<WorkspaceProfile>('/api/v1/workspaces/profile', opts);

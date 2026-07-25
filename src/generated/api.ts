@@ -453,7 +453,7 @@ export interface paths {
         /**
          * Your workspace profile
          * @description The workspace your `x-api-key` belongs to. No secrets —
-         *     `apiKeyLast4` only, to confirm which key you hold.
+         *     `dev.keyLast4` only, to confirm which key you hold.
          */
         get: operations["getWorkspaceProfile"];
         /**
@@ -461,8 +461,8 @@ export interface paths {
          * @description Send only what changes. Updatable: `name`, `tradeName`,
          *     `businessAddress`, `industry`, `operatingHours`, `timeZone`.
          *     Unknown fields → `400`. The rest is platform-managed (`plan`,
-         *     `pricing`, limits), immutable (`currency`), or has its own
-         *     endpoint (webhook URL).
+         *     limits), immutable (`currency`), or has its own endpoint
+         *     (webhook URL).
          */
         put: operations["updateWorkspaceProfile"];
         post?: never;
@@ -1883,18 +1883,39 @@ export interface components {
             /** @description Weekdays the business is closed. 0=Sunday … 6=Saturday. */
             closedDays: number[];
         };
+        /** @description Business identity fields (per workspace). */
+        WorkspaceProfileBlock: {
+            tradeName: string | null;
+            businessAddress: string | null;
+            industry: components["schemas"]["WorkspaceIndustry"] | null;
+            logoUrl: string | null;
+            operatingHours: components["schemas"]["OperatingHours"] | null;
+        };
         /**
-         * @description Your negotiated delivery pricing (integer minor units). Platform-
-         *     managed — shown for transparency, not updatable via the API.
+         * @description Developer surface — everything you need to confirm which
+         *     credentials your integration holds without ever exposing them.
          */
-        WorkspacePricing: {
-            baseFare?: number | null;
-            perKm?: number | null;
-            minFare?: number | null;
+        WorkspaceDevBlock: {
+            /** @description Last 4 characters of the active API key. */
+            keyLast4: string | null;
+            /** @description True when an API key has been issued for this workspace. */
+            hasKey: boolean;
+            webhookUrl: string | null;
+            /** @description True when a webhook signing secret has been issued. */
+            hasWebhookSecret: boolean;
+        };
+        /** @description Plan tier + per-tenant ceilings. Null on either ceiling means the platform default applies. */
+        WorkspacePlanBlock: {
+            /** @description Plan key (`starter`, `growth`, `scale`, `custom`). */
+            key: string | null;
+            /** @description API request ceiling per minute. */
+            rateLimitPerMin: number | null;
+            /** @description Concurrent live-tracking subscription cap. */
+            maxTrackedOrders: number | null;
         };
         /**
          * @description Sanitized view of your workspace. Credentials never appear here —
-         *     `apiKeyLast4` is the only key-related field, for display.
+         *     `dev.keyLast4` is the only key-related field, for display.
          */
         WorkspaceProfile: {
             /** Format: ulid */
@@ -1905,21 +1926,9 @@ export interface components {
             country?: string | null;
             /** @description IANA name, e.g. `Africa/Cairo`. Null = viewer's device zone. */
             timeZone?: string | null;
-            webhookUrl?: string | null;
-            /** @description Last 4 characters of the active API key. */
-            apiKeyLast4?: string | null;
-            /** @description Plan key (`starter`, `growth`, `scale`, `custom`). Managed from the hub. */
-            plan?: string | null;
-            /** @description API request ceiling per minute. Null = platform default. */
-            rateLimitPerMin?: number | null;
-            /** @description Concurrent live-tracking subscription cap. Null = platform default. */
-            maxTrackedOrders?: number | null;
-            pricing?: components["schemas"]["WorkspacePricing"] | null;
-            tradeName?: string | null;
-            businessAddress?: string | null;
-            industry?: (string & components["schemas"]["WorkspaceIndustry"]) | null;
-            logoUrl?: string | null;
-            operatingHours?: components["schemas"]["OperatingHours"] | null;
+            profile: components["schemas"]["WorkspaceProfileBlock"];
+            dev: components["schemas"]["WorkspaceDevBlock"];
+            plan: components["schemas"]["WorkspacePlanBlock"];
             /** Format: date-time */
             createdAt?: string | null;
             /** Format: date-time */
@@ -1934,7 +1943,7 @@ export interface components {
             name?: string;
             tradeName?: string | null;
             businessAddress?: string | null;
-            industry?: (string & components["schemas"]["WorkspaceIndustry"]) | null;
+            industry?: components["schemas"]["WorkspaceIndustry"] | null;
             operatingHours?: components["schemas"]["OperatingHours"] | null;
             /** @description IANA name. Null / empty clears it. */
             timeZone?: string | null;

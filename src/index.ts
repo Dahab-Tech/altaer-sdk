@@ -104,7 +104,6 @@ export type {
   WebhookEvent,
   WebhookEventType,
   WorkspaceIndustry,
-  WorkspacePricing,
   WorkspaceProfile,
 } from './types';
 

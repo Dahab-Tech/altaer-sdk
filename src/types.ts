@@ -134,7 +134,6 @@ export type WorkspaceProfile = Schemas['WorkspaceProfile'];
 export type UpdateWorkspaceProfileInput = Schemas['UpdateWorkspaceProfileInput'];
 export type WorkspaceIndustry = Schemas['WorkspaceIndustry'];
 export type OperatingHours = Schemas['OperatingHours'];
-export type WorkspacePricing = Schemas['WorkspacePricing'];
 /** Response of `client.workspace.rotateCredentials()`. `apiKey` is the
  *  new key — shown once, never retrievable again. */
 export type RotateCredentialsResponse = Schemas['RotateCredentialsResponse'];
