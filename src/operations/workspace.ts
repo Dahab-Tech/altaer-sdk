@@ -19,7 +19,7 @@ export class WorkspaceResource {
   }
 
   /** Update profile fields. Send only what you're changing — updatable
-   *  fields are `name`, `tradeName`, `businessAddress`, `industry`,
+   *  fields are `name`, `tradeName`, `branchAddress`, `industry`,
    *  `operatingHours`, `timeZone`. Unknown fields are rejected with a
    *  400 (nothing is silently dropped). Returns the updated profile. */
   async updateProfile(

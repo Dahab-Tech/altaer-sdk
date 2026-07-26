@@ -2,6 +2,29 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.35] — 2026-07-26
+
+`WorkspaceProfileBlock.businessAddress` renamed to `branchAddress`. The field semantically was always the per-branch operating address (pickup location, service area, delivery receipt); the old name suggested "the business's legal address" which is a different concept — legal / tax address lives on the operator, not the workspace. Server 400s on the old key (no compat alias), so this is a required update.
+
+### Changed
+
+- **`WorkspaceProfile.profile.businessAddress` → `WorkspaceProfile.profile.branchAddress`**. Same type (`string | null`), same semantics as before (per-branch operating location).
+- **`UpdateWorkspaceProfileInput.branchAddress`** replaces the old `businessAddress` key on the PATCH body. Old key returns `400 Unknown field(s): businessAddress`.
+
+### Migration
+
+```ts
+// before (0.0.34)
+const profile = await al.workspace.getProfile();
+console.log(profile.profile.businessAddress);
+await al.workspace.updateProfile({ businessAddress: '12 El-Tahrir St, Cairo' });
+
+// after (0.0.35)
+const profile = await al.workspace.getProfile();
+console.log(profile.profile.branchAddress);
+await al.workspace.updateProfile({ branchAddress: '12 El-Tahrir St, Cairo' });
+```
+
 ## [0.0.34] — 2026-07-25
 
 `WorkspaceProfile` restructured into named blocks. Reading `w.tradeName` becomes `w.profile.tradeName`; reading `w.apiKeyLast4` becomes `w.dev.keyLast4`; reading `w.rateLimitPerMin` becomes `w.plan.rateLimitPerMin`. The block names are self-documenting so integrations know at a glance what each field family covers.

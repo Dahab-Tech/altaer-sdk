@@ -459,7 +459,7 @@ export interface paths {
         /**
          * Update profile fields
          * @description Send only what changes. Updatable: `name`, `tradeName`,
-         *     `businessAddress`, `industry`, `operatingHours`, `timeZone`.
+         *     `branchAddress`, `industry`, `operatingHours`, `timeZone`.
          *     Unknown fields → `400`. The rest is platform-managed (`plan`,
          *     limits), immutable (`currency`), or has its own endpoint
          *     (webhook URL).
@@ -1886,7 +1886,7 @@ export interface components {
         /** @description Business identity fields (per workspace). */
         WorkspaceProfileBlock: {
             tradeName: string | null;
-            businessAddress: string | null;
+            branchAddress: string | null;
             industry: components["schemas"]["WorkspaceIndustry"] | null;
             logoUrl: string | null;
             operatingHours: components["schemas"]["OperatingHours"] | null;
@@ -1942,7 +1942,7 @@ export interface components {
             /** @description Display name. Non-empty, max 80 characters. */
             name?: string;
             tradeName?: string | null;
-            businessAddress?: string | null;
+            branchAddress?: string | null;
             industry?: components["schemas"]["WorkspaceIndustry"] | null;
             operatingHours?: components["schemas"]["OperatingHours"] | null;
             /** @description IANA name. Null / empty clears it. */
