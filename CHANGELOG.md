@@ -2,6 +2,23 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.37] — 2026-07-27
+
+Adds a per-workspace hourly cap on `POST /orders`, distinct from the existing per-minute API rate limit. Protects the driver pool from an authenticated tenant flooding fake dispatches by burning the general API budget entirely on order creates.
+
+### Added
+
+- **`WorkspacePlanBlock.orderCreatesPerHour`** — nullable integer. Hourly ceiling on `POST /orders` per tenant. Null means the platform default for the tenant's plan applies (`starter` 30/hr, `growth` 2 000/hr, `scale` 20 000/hr, `custom` 2 000/hr). Reads via `al.workspace.getProfile()` (in `plan.orderCreatesPerHour`); writes via the same admin `PUT /me/plan` endpoint that sets the other ceilings.
+
+### Behavior
+
+- Exceeding the cap on `POST /orders` returns `429` with error code `auth/rate_limit_exceeded` (same shape / handling as the existing per-minute limit — `RateLimitError` in the SDK, `retryAfterSec` populated from the `Retry-After` header).
+- The two limiters are independent: read-heavy tenants no longer consume their order-creation budget on GETs.
+
+### Migration
+
+No client code changes required for existing integrations. If you were parsing `plan` and expecting exactly three fields, expect a fourth (`orderCreatesPerHour`) on every response.
+
 ## [0.0.35] — 2026-07-26
 
 `WorkspaceProfileBlock.businessAddress` renamed to `branchAddress`. The field semantically was always the per-branch operating address (pickup location, service area, delivery receipt); the old name suggested "the business's legal address" which is a different concept — legal / tax address lives on the operator, not the workspace. Server 400s on the old key (no compat alias), so this is a required update.

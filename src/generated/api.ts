@@ -721,10 +721,10 @@ export interface components {
             cancelReason?: string;
             /**
              * @description Who initiated the cancel: `pickup` = sender, `dropoff` =
-             *     recipient, `workspace` = your own system (default).
-             *     Unrecognized values — including reserved `driver` /
-             *     `system` — fall back to `workspace`, so an integrator can't
-             *     forge a driver-cancel to trigger the driver penalty.
+             *     recipient, `workspace` = your own system (default when omitted).
+             *     Reserved actors `driver` / `system` are rejected with 400
+             *     `validation/invalid_format` — an integrator cannot forge a
+             *     driver-cancel to trigger the driver penalty.
              *
              *     **Status rule:** `pickup` is rejected at `onWayToDropOff`
              *     (409 `order/cancel_not_allowed_for_actor`) — only `dropoff`
@@ -930,7 +930,7 @@ export interface components {
             cancellation: {
                 by: components["schemas"]["CanceledBy"];
                 reason: string | null;
-                code: components["schemas"]["CancelReasonCode"] | null;
+                code: (string & components["schemas"]["CancelReasonCode"]) | null;
             } | null;
             /** @description Buy-at-pickup block. Null unless enabled at create. */
             buyAtPickup: {
@@ -1887,7 +1887,7 @@ export interface components {
         WorkspaceProfileBlock: {
             tradeName: string | null;
             branchAddress: string | null;
-            industry: components["schemas"]["WorkspaceIndustry"] | null;
+            industry: (string & components["schemas"]["WorkspaceIndustry"]) | null;
             logoUrl: string | null;
             operatingHours: components["schemas"]["OperatingHours"] | null;
         };
@@ -1904,7 +1904,7 @@ export interface components {
             /** @description True when a webhook signing secret has been issued. */
             hasWebhookSecret: boolean;
         };
-        /** @description Plan tier + per-tenant ceilings. Null on either ceiling means the platform default applies. */
+        /** @description Plan tier + per-tenant ceilings. Null on any ceiling means the platform default applies. */
         WorkspacePlanBlock: {
             /** @description Plan key (`starter`, `growth`, `scale`, `custom`). */
             key: string | null;
@@ -1912,6 +1912,12 @@ export interface components {
             rateLimitPerMin: number | null;
             /** @description Concurrent live-tracking subscription cap. */
             maxTrackedOrders: number | null;
+            /**
+             * @description Hourly cap on `POST /orders` specifically — separate from `rateLimitPerMin`
+             *     so read-heavy tenants don't consume their order-creation budget on GETs.
+             *     Null = platform default (30/hr on Starter, higher on Growth+).
+             */
+            orderCreatesPerHour: number | null;
         };
         /**
          * @description Sanitized view of your workspace. Credentials never appear here —
@@ -1943,7 +1949,7 @@ export interface components {
             name?: string;
             tradeName?: string | null;
             branchAddress?: string | null;
-            industry?: components["schemas"]["WorkspaceIndustry"] | null;
+            industry?: (string & components["schemas"]["WorkspaceIndustry"]) | null;
             operatingHours?: components["schemas"]["OperatingHours"] | null;
             /** @description IANA name. Null / empty clears it. */
             timeZone?: string | null;

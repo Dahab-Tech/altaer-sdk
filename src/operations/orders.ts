@@ -42,9 +42,10 @@ export class OrdersResource {
     return this.http.get<OrderListResponse>(`/api/v1/workspaces/orders${qs ? `?${qs}` : ''}`, opts);
   }
 
-  /** Cancel an order. `canceledBy` is audit-trail only; `driver`/`system` fall back to `workspace`
-   *  (prevents forging driver-cancel penalty). `pickup` rejected post-goods (409).
-   *  Pre-pickup is free; post-pickup may charge — see `financials`. Idempotent. */
+  /** Cancel an order. `canceledBy` is audit-trail only; reserved `driver`/`system` are rejected
+   *  with 400 `validation/invalid_format` (prevents forging driver-cancel penalty). `pickup`
+   *  rejected post-goods (409). Pre-pickup is free; post-pickup may charge — see `financials`.
+   *  Idempotent. */
   async cancel(orderId: string, input?: CancelOrderInput, opts?: RequestOptions): Promise<Order> {
     return this.http.post<Order>(`/api/v1/workspaces/orders/${orderId}/cancel`, input ?? {}, opts);
   }
