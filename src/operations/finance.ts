@@ -79,13 +79,19 @@ export class FinanceResource {
   }
 
   /** Closed-window statement for monthly reconciliation. Includes
-   *  opening + closing balances and every entry in range. Defaults to
-   *  the last 30 days when called with no args. Window is inclusive
-   *  on both ends. */
+   *  opening + closing balances, a per-window summary, and a page of
+   *  entries. Defaults to the last 30 days when called with no args.
+   *  Window is inclusive on both ends.
+   *
+   *  `entries` paginates (default limit=50, max 200). `openingBalance`,
+   *  `closingBalance`, `total`, and `summary` are window-scoped and
+   *  stay identical across every page in the same window. */
   async statement(input?: StatementInput, opts?: RequestOptions): Promise<Statement> {
     const params = new URLSearchParams();
     if (input?.fromDate) params.set('fromDate', input.fromDate);
     if (input?.toDate) params.set('toDate', input.toDate);
+    if (input?.limit !== undefined) params.set('limit', String(input.limit));
+    if (input?.offset !== undefined) params.set('offset', String(input.offset));
     const qs = params.toString();
     return this.http.get<Statement>(
       `/api/v1/workspaces/me/finance/statement${qs ? `?${qs}` : ''}`,

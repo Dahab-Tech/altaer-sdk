@@ -173,16 +173,16 @@ Paste that into **Developers → Webhook URL** and Save. Every event lands on yo
 
 Failed SDK calls throw typed classes — use `instanceof`, not status switches. Each carries `statusCode`, `code`, `message`, `requestId` (quote it to support), `data` (structured context when the error provides it), and the raw `body`:
 
-| Class             | HTTP             | `code`                                |
-| ----------------- | ---------------- | ------------------------------------- |
-| `ValidationError` | 400              | server-provided, e.g. `bad_request`   |
-| `AuthError`       | 401              | `auth/api_key_invalid`                |
-| `NotFoundError`   | 404              | e.g. `order/not_found`                |
-| `ConflictError`   | 409              | e.g. `order/not_ratable`              |
-| `RateLimitError`  | 429              | `rate_limited` (`retryAfterSec`)      |
-| `ServerError`     | 5xx              | `null` (thrown after retries exhaust) |
-| `NetworkError`    | 0 (no response)  | `network_error`                       |
-| `AltaerError`     | any other status | server-provided                       |
+| Class | HTTP | `code` |
+| --- | --- | --- |
+| `ValidationError` | 400 | server-provided, e.g. `bad_request` |
+| `AuthError` | 401 | `auth/api_key_invalid` |
+| `NotFoundError` | 404 | e.g. `order/not_found` |
+| `ConflictError` | 409 | e.g. `order/not_ratable` |
+| `RateLimitError` | 429 | `auth/rate_limit_exceeded` (`retryAfterSec`) |
+| `ServerError` | 5xx | `null` (thrown after retries exhaust) |
+| `NetworkError` | 0 (no response) | `network_error` |
+| `AltaerError` | any other status | server-provided |
 
 Raw HTTP: `{ "error": { "code", "message" } }` body plus an `X-Request-Id` header.
 
@@ -211,7 +211,7 @@ Every request sends your API key in the `x-api-key` header — the SDK does this
 | `driver_cancel_post_pickup` | accept → picked up → driver cancels (punitive financials) |
 | `no_driver_found` | search exhausts → `order.no_driver_found` webhook |
 | `customer_refused_return` | accept → picked up → refused at the door → linked return order (`return.originalOrderId`) delivered back; requires `returnable: true` |
-| `random` | server picks one of the four above uniformly (never `customer_refused_return` — that one must be named); the concrete choice is written back to `order.simulation` |
+| `random` | server picks one of the first four uniformly (never `customer_refused_return` — that one must be named); the concrete choice is written back to `order.simulation` |
 
 Works on both platform- and fleet-routed workspaces — the robot inherits the order's dispatch snapshot at create time, so ledger legs and settlements land against the correct accounts. Rejected with `400` in the live environment.
 

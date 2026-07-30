@@ -93,11 +93,12 @@ export class RateLimitError extends AltaerError {
 
   constructor(
     message: string,
+    code: string | null,
     retryAfterSec: number | null,
     body: unknown,
     requestId: string | null
   ) {
-    super(message, 429, 'rate_limited', body, requestId);
+    super(message, 429, code, body, requestId);
     this.name = 'RateLimitError';
     this.retryAfterSec = retryAfterSec;
   }

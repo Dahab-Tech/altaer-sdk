@@ -245,6 +245,7 @@ export class HttpClient {
         const seconds = retryAfter ? Number.parseInt(retryAfter, 10) : null;
         return new RateLimitError(
           message,
+          code,
           Number.isFinite(seconds) ? seconds : null,
           body,
           requestId
@@ -268,4 +269,4 @@ export class HttpClient {
 
 // Stamped on User-Agent so the platform team can identify the SDK version in logs.
 // Bump manually together with package.json version.
-const SDK_VERSION = '0.0.31';
+const SDK_VERSION = '0.0.39';

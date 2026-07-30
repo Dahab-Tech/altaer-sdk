@@ -432,7 +432,9 @@ export interface paths {
          * Date-range statement for monthly reconciliation
          * @description Ledger + summary for a date range (inclusive; default: last 30
          *     days), with opening AND closing balances so it reconciles
-         *     standalone.
+         *     standalone. `entries` paginates (default `limit=50`, max `200`);
+         *     `openingBalance`, `closingBalance`, `summary`, and `total` are
+         *     window-scoped and stay identical on every page.
          */
         get: operations["getStatement"];
         put?: never;
@@ -765,7 +767,7 @@ export interface components {
          *     populated — no per-field mixed-null shapes.
          */
         Order: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             status: components["schemas"]["OrderStatus"];
             /**
@@ -884,7 +886,7 @@ export interface components {
             };
             /** @description Driver identity + live signals. Null until a driver accepts. */
             driver: {
-                /** Format: ulid */
+                /** Format: altaer-id */
                 id: string;
                 name: string;
                 phoneNumber: string;
@@ -920,10 +922,10 @@ export interface components {
             } | {
                 /** @enum {string} */
                 kind: "fleet";
-                /** Format: ulid */
+                /** Format: altaer-id */
                 fleetId: string;
                 fleetName: string;
-                /** Format: ulid */
+                /** Format: altaer-id */
                 ownerOperatorId: string;
             }) | null;
             /** @description Cancellation context. Null unless `status === "canceled"`. */
@@ -968,7 +970,7 @@ export interface components {
                 /** @description `round(deliveryFee × feeMultiplier)` — at-door refusal charge. */
                 feeTotal: number | null;
                 /**
-                 * Format: ulid
+                 * Format: altaer-id
                  * @description Non-null = this row IS a return trip; value is the original order id.
                  */
                 originalOrderId: string | null;
@@ -1053,12 +1055,12 @@ export interface components {
             offset: number;
         };
         RatingResponse: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             orderId: string;
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description The driver the rating landed on.
              */
             driverId: string;
@@ -1140,9 +1142,9 @@ export interface components {
          *     workspace — read `breakdown.api` for your slice.
          */
         AltaerBalanceSettledPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1185,16 +1187,16 @@ export interface components {
          */
         AltaerBalanceReversedPayload: {
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description ID of the NEW reversal Settlement row.
              */
             settlementId: string;
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description ID of the settle this reverses — the join key.
              */
             originalSettlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1267,11 +1269,11 @@ export interface components {
          *     Slices of one settle share `settlementId` + `provider.ref`.
          */
         AltaerFleetCommissionSettledPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1307,16 +1309,16 @@ export interface components {
          *     settle. Mirrors the forward fan-out.
          */
         AltaerFleetCommissionReversedPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description ID of the settled slice this reverses — the join key.
              */
             originalSettlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1373,11 +1375,11 @@ export interface components {
          *     `initiatedBy` distinguishes which side hit the button.
          */
         OperatorFleetBalanceRecordedPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1437,13 +1439,13 @@ export interface components {
          *     operator's own workspace.
          */
         FleetDriverBalanceSettledPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             operatorId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             driverId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             fleetId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1472,18 +1474,18 @@ export interface components {
          *     forward via `originalSettlementId`.
          */
         FleetDriverBalanceReversedPayload: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             settlementId: string;
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description ID of the settled row this reverses — the join key.
              */
             originalSettlementId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             operatorId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             driverId: string;
-            /** Format: ulid */
+            /** Format: altaer-id */
             fleetId: string;
             currency: components["schemas"]["Currency"];
             /**
@@ -1511,7 +1513,7 @@ export interface components {
          *     trail) are never exposed on the wire.
          */
         FleetSnapshot: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             name: string;
             /** @description Falls back to `name` when the fleet has no branding name. */
@@ -1521,7 +1523,7 @@ export interface components {
              *     {name} [logo]". Null when the fleet has no logo uploaded.
              */
             brandingLogoUrl?: string | null;
-            /** Format: ulid */
+            /** Format: altaer-id */
             ownerOperatorId: string;
             /**
              * @description Fleet's operating currency. Tenants pair a workspace with a
@@ -1544,7 +1546,7 @@ export interface components {
             isActive: boolean;
         };
         DriverSnapshot: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             /**
              * @description Grouped identity block. `first` / `last` can each be null
@@ -1622,7 +1624,7 @@ export interface components {
                  */
                 note?: string | null;
                 /**
-                 * Format: ulid
+                 * Format: altaer-id
                  * @description Opaque Altaer admin id for internal audit correlation.
                  *     Consumers typically ignore this field.
                  */
@@ -1636,7 +1638,7 @@ export interface components {
                 /** Format: date-time */
                 occurredAt: string;
                 fleet: components["schemas"]["FleetSnapshot"];
-                /** Format: ulid */
+                /** Format: altaer-id */
                 revokedByAdminId?: string | null;
             };
         };
@@ -1657,11 +1659,32 @@ export interface components {
          *       (you collected COD; we hold a delivery fee against it).
          *     - `card_payable` — Altaer owes you for revenue we collected on
          *       your behalf (prepaid card orders).
+         *     - `punitive`     — driver-cancel-after-pickup rows. Recovery leg
+         *       that makes your workspace whole for the merchant slice the
+         *       driver walked off with; sign is `credit` (you're being refunded,
+         *       not paying for service).
          *     - `settlement`   — a real-world money movement reducing your balance.
          *     - `adjustment`   — admin correction.
+         *
+         *     The three types below appear ONLY for hub-internal own-fleet workspaces
+         *     (workspaces served by their own operator's fleet) and match the
+         *     `workspace.*` webhook events the same workspaces already receive. External
+         *     tenants using trusted-network fleets never see these — the writer applies
+         *     symmetric obscurity so the underlying rows aren't attributed to the workspace.
+         *
+         *     - `op_workspace`         — accrual between your workspace and its
+         *       fulfilling operator on own-fleet direct-routing. Cash COD → operator
+         *       owes you the merchant slice (`credit`); card prepay → you owe the
+         *       operator the delivery fee (`debit`).
+         *     - `fleet_commission`    — commission your fleet paid Altaer per order,
+         *       sign relative to the operator (money out). Mirrors the
+         *       `workspace.altaer_fleet_commission.*` webhook.
+         *     - `fleet_driver_payment` — cash-COD/payout leg between your operator
+         *       and one of their fleet drivers. Mirrors the
+         *       `workspace.fleet_driver_balance.settled` webhook.
          * @enum {string}
          */
-        LedgerEntryType: "cash_due" | "card_payable" | "settlement" | "adjustment";
+        LedgerEntryType: "cash_due" | "card_payable" | "punitive" | "settlement" | "adjustment" | "op_workspace" | "fleet_commission" | "fleet_driver_payment";
         /**
          * @description `collected_from` = the platform took cash from you (you owed).
          *     `paid_to`        = the platform paid cash to you (we owed).
@@ -1720,11 +1743,11 @@ export interface components {
          *     what the workspace owes the platform.
          */
         LedgerEntry: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             currency: components["schemas"]["Currency"];
             type: components["schemas"]["LedgerEntryType"];
-            /** Format: ulid */
+            /** Format: altaer-id */
             orderId: string | null;
             /** @description Your own order id, echoed back if set on order creation. */
             externalOrderId: string | null;
@@ -1759,7 +1782,7 @@ export interface components {
          *     the first ever); `period.to` = this row's `createdAt`.
          */
         Settlement: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             currency: components["schemas"]["Currency"];
             /** @description Absolute magnitude, integer minor units. */
@@ -1806,7 +1829,7 @@ export interface components {
          */
         SettlementItem: {
             /**
-             * Format: ulid
+             * Format: altaer-id
              * @description Altaer's order id — the join key against your books.
              */
             orderId: string;
@@ -1818,11 +1841,12 @@ export interface components {
              */
             origin: "api" | "hub";
             /**
-             * @description `settlement` items appear when a reversed settle is being
-             *     re-settled here.
+             * @description The ledger event behind the item. `operator_workspace_payment`
+             *     appears only on own-fleet orders (the operator↔workspace
+             *     goods/fee leg); settle rows themselves are never items.
              * @enum {string}
              */
-            type: "order_completion" | "order_cancel_punitive" | "settlement";
+            type: "order_completion" | "order_cancel_punitive" | "operator_workspace_payment";
             /**
              * @description Signed minor units (positive = you owed the platform).
              *     Per-origin item sums match `breakdown.<origin>`.
@@ -1856,20 +1880,29 @@ export interface components {
         };
         /**
          * @description Closed-window statement with opening + closing balances — it
-         *     reconciles standalone.
+         *     reconciles standalone. `entries` is a page slice; `total`,
+         *     `openingBalance`, `closingBalance`, and `summary` are window-scoped
+         *     and identical across every page in the same window.
          */
         Statement: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             workspaceId: string;
             /** Format: date-time */
             fromDate: string;
             /** Format: date-time */
             toDate: string;
-            /** @description Signed balance at the start of the window. */
+            /** @description Signed balance at the start of the window. Same on every page. */
             openingBalance: number;
-            /** @description Signed balance at the end of the window. */
+            /** @description Signed balance at the end of the window. Same on every page. */
             closingBalance: number;
+            /** @description Page slice of ledger rows (deduped by orderId + type). See `limit`/`offset`. */
             entries: components["schemas"]["LedgerEntry"][];
+            /** @description Total deduped rows in the window. Same on every page. */
+            total: number;
+            /** @description Page size used for `entries`. */
+            limit: number;
+            /** @description Rows skipped from the start of `entries`. */
+            offset: number;
             summary: components["schemas"]["FinanceSummary"];
         };
         /** @enum {string} */
@@ -1924,7 +1957,7 @@ export interface components {
          *     `dev.keyLast4` is the only key-related field, for display.
          */
         WorkspaceProfile: {
-            /** Format: ulid */
+            /** Format: altaer-id */
             id: string;
             name?: string | null;
             currency: components["schemas"]["Currency"];
@@ -1960,8 +1993,12 @@ export interface components {
             message: string;
         };
         SetWebhookUrlInput: {
-            /** @description http(s) consumer URL, or null to clear it. */
-            webhookUrl: string | null;
+            /**
+             * @description http(s) consumer URL. Sending null, an empty string, or
+             *     omitting the field clears the webhook (200 with
+             *     `webhookUrl: null`).
+             */
+            webhookUrl?: string | null;
         };
         SetWebhookUrlResponse: {
             success: boolean;
@@ -2022,6 +2059,10 @@ export interface components {
             headers: {
                 /** @description Seconds to wait before retrying. */
                 "Retry-After"?: number;
+                /** @description Your plan's request ceiling for the current window. */
+                "RateLimit-Limit"?: number;
+                /** @description Requests left in the current window (0 on this response). */
+                "RateLimit-Remaining"?: number;
                 [name: string]: unknown;
             };
             content: {
@@ -2032,9 +2073,11 @@ export interface components {
     parameters: {
         OrderId: string;
         /**
-         * @description A unique key per logical request. Server caches the response 24h and
-         *     replays it on repeats with the same key. Auto-generated by the
-         *     official SDKs if omitted.
+         * @description A unique key per logical request (any string; UUIDs work well).
+         *     Successful (2xx) responses are cached 24h and replayed on repeats
+         *     with the same key — failed attempts are not cached, so retrying
+         *     with the same key re-executes. Auto-generated by the official
+         *     SDKs if omitted.
          */
         IdempotencyKey: string;
     };
@@ -2077,9 +2120,11 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description A unique key per logical request. Server caches the response 24h and
-                 *     replays it on repeats with the same key. Auto-generated by the
-                 *     official SDKs if omitted.
+                 * @description A unique key per logical request (any string; UUIDs work well).
+                 *     Successful (2xx) responses are cached 24h and replayed on repeats
+                 *     with the same key — failed attempts are not cached, so retrying
+                 *     with the same key re-executes. Auto-generated by the official
+                 *     SDKs if omitted.
                  */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
@@ -2515,10 +2560,20 @@ export interface operations {
     getStatement: {
         parameters: {
             query?: {
-                /** @description ISO date `YYYY-MM-DD`. Defaults to 30 days before `toDate`. */
+                /**
+                 * @description `YYYY-MM-DD` (whole day) or a full ISO date-time for
+                 *     sub-day precision. Defaults to 30 days before `toDate`.
+                 */
                 fromDate?: string;
-                /** @description ISO date `YYYY-MM-DD`. Defaults to today. */
+                /**
+                 * @description `YYYY-MM-DD` (whole day, inclusive) or a full ISO
+                 *     date-time. Defaults to today.
+                 */
                 toDate?: string;
+                /** @description Page size for `entries`. Window totals are unaffected. */
+                limit?: number;
+                /** @description Skip N rows from the start of `entries`. */
+                offset?: number;
             };
             header?: never;
             path?: never;

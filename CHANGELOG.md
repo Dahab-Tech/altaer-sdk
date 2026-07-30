@@ -2,6 +2,85 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.39] — 2026-07-30
+
+Spec-accuracy release: the OpenAPI document (and the types generated from it) now match the deployed API exactly. One behavior fix in the error layer.
+
+### Fixed
+
+- **`RateLimitError.code` now carries the server's envelope code** (`auth/rate_limit_exceeded`) instead of the hardcoded literal `'rate_limited'`. Every error class now honors the same `.code` contract: "machine-readable code from the server's error envelope". If you branched on `err.code === 'rate_limited'`, branch on `instanceof RateLimitError` (always correct) or the new code string.
+- **`SettlementItem.type`** — the generated enum previously listed `settlement`, which the API never emits as an item (settle rows are excluded from item lists by construction). The real third value is `operator_workspace_payment` (own-fleet operator↔workspace goods/fee leg).
+
+### Docs / spec corrections (no wire changes — the API always behaved this way)
+
+- Id fields are documented as `format: altaer-id` (prefixed strings like `ord_h7Q2mX41Zp`) — the previous `format: ulid` tag and bare-integer id examples were wrong.
+- `Idempotency-Key` accepts any string (not just UUIDs), and only **2xx** responses are cached — a failed attempt retried with the same key re-executes.
+- `PUT /workspaces/me/webhook` — `webhookUrl` is optional: null, empty string, or omitting the field clears the webhook.
+- Statement `fromDate` / `toDate` accept full ISO date-times for sub-day precision, not just `YYYY-MM-DD`.
+- Validation bounds documented: waypoint string caps (contactName 120, phone 4–30, address 500, …), quote coordinate ranges (±90 / ±180), `cancelReason` 500, rating `comment` 2000.
+- Rate limiting: bucketed per workspace per minute (not per-IP); every response carries `RateLimit-Limit` / `RateLimit-Remaining`.
+- Sandbox webhook deliveries dead-letter after 2 attempts (production: 12).
+- Sandbox simulation docs cover `customer_refused_return` (requires `returnable: true`; excluded from `random`), and the SDK digest lists `orders.createReturn`.
+
+## [0.0.38] — 2026-07-29
+
+Three additive updates on the finance surface. `GET /statement` paginates its `entries` array (window totals stay on every page). `LedgerEntryType` gains four values that were emitted by the API for own-fleet workspaces but missing from the documented enum. The `/ledger` reader now trusts the writer's workspace-attribution stamps so its output matches the `workspace.*` webhook fan-out (own-fleet workspaces now receive their operator-commission and fleet-driver rows here — previously only via webhook).
+
+### Added
+
+- **`StatementInput.limit` / `StatementInput.offset`** — page controls for `al.finance.statement()`. Defaults match every other finance list: `limit=50`, max `200`, `offset=0`.
+- **`Statement.total` / `Statement.limit` / `Statement.offset`** — window-scoped row count + echoed page params on every response.
+- **`LedgerEntryType` gains four values** (all previously undocumented but emitted for own-fleet workspaces):
+
+  - `punitive` — driver-cancel-after-pickup rows. Recovery leg that makes your workspace whole for the merchant slice the driver walked off with; sign is `credit`.
+  - `op_workspace` — accrual between your workspace and its fulfilling operator on own-fleet direct-routing (cash COD → operator owes you goods; card prepay → you owe operator delivery fee).
+  - `fleet_commission` — commission your fleet paid Altaer per order. Mirrors the `workspace.altaer_fleet_commission.*` webhook.
+  - `fleet_driver_payment` — cash-COD / payout leg between your operator and one of their fleet drivers. Mirrors the `workspace.fleet_driver_balance.settled` webhook.
+
+  All four appear only for hub-internal own-fleet workspaces (workspaces served by their own operator's fleet). External tenants using trusted-network fleets never see them — the writer applies symmetric obscurity so the underlying rows aren't attributed to the workspace at write time, and the reader honors that.
+
+### Behavior
+
+- `Statement.entries` is now a page slice (default 50 rows). `openingBalance`, `closingBalance`, `total`, and `summary` are **window-scoped** — identical on every page in the same window. Walk pages by bumping `offset` until you've consumed `total` rows.
+- `Statement.summary` is now computed server-side in a single Mongo aggregation instead of walking every entry in JS — meaningful only if you were noticing latency on large windows.
+- **`al.finance.ledger()` now surfaces own-fleet operator + fleet-driver rows** for hub-internal workspaces. Previously those rows only reached those workspaces via webhook events (`workspace.altaer_fleet_commission.*`, `workspace.fleet_driver_balance.settled`); the SDK poll path was missing them. Now the read matches the webhook fan-out — same set of rows, same attribution. Trusted-fleet cross-operator legs remain hidden as before.
+
+### Migration
+
+No breaking changes for the wire shape. Existing code keeps working. Two considerations:
+
+**Wide-window statement callers** — if you assumed `entries` contained every row, either narrow the window or walk pages:
+
+```ts
+// before (0.0.37) — got every row in one response
+const s = await al.finance.statement({
+  fromDate: '2026-01-01',
+  toDate: '2026-06-30',
+});
+for (const row of s.entries) {
+  /* ... */
+}
+
+// after (0.0.38) — walk pages
+let offset = 0;
+const pageSize = 200;
+while (true) {
+  const page = await al.finance.statement({
+    fromDate: '2026-01-01',
+    toDate: '2026-06-30',
+    limit: pageSize,
+    offset,
+  });
+  for (const row of page.entries) {
+    /* ... */
+  }
+  offset += page.entries.length;
+  if (offset >= page.total) break;
+}
+```
+
+**Exhaustive `LedgerEntryType` switches** — add cases for the four new values (or a `default` that logs unknowns). TypeScript will flag missing arms after upgrading. Pure-tenant integrations that only ever see `cash_due` / `card_payable` / `settlement` / `adjustment` don't need changes — the new values only appear for hub-internal own-fleet workspaces.
+
 ## [0.0.37] — 2026-07-27
 
 Adds a per-workspace hourly cap on `POST /orders`, distinct from the existing per-minute API rate limit. Protects the driver pool from an authenticated tenant flooding fake dispatches by burning the general API budget entirely on order creates.

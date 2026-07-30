@@ -85,12 +85,19 @@ export interface FinancePaginationInput {
   until?: string;
 }
 
-/** Optional query for `client.finance.statement(input?)`. */
+/** Optional query for `client.finance.statement(input?)`.
+ *  `entries` paginates via `limit`/`offset`; `openingBalance`,
+ *  `closingBalance`, `total`, and `summary` are window-scoped and
+ *  identical across every page in the same window. */
 export interface StatementInput {
   /** ISO date `YYYY-MM-DD`. Defaults to 30 days before `toDate`. */
   fromDate?: string;
   /** ISO date `YYYY-MM-DD`. Defaults to today. */
   toDate?: string;
+  /** Page size for `entries`. Default 50, max 200. */
+  limit?: number;
+  /** Rows to skip from the start of `entries`. Default 0. */
+  offset?: number;
 }
 
 // ── Responses ────────────────────────────────────────────────────────
