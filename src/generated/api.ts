@@ -1655,15 +1655,25 @@ export interface components {
             };
         };
         /**
-         * @description - `cash_due`     — cash Altaer needs to collect from your workspace
-         *       (you collected COD; we hold a delivery fee against it).
-         *     - `card_payable` — Altaer owes you for revenue we collected on
-         *       your behalf (prepaid card orders).
+         * @description The type names the payment family of the underlying order leg, NOT
+         *     the money direction. Direction always lives in `amount.direction`:
+         *     `debit` increases what you owe Altaer, `credit` decreases it.
+         *
+         *     - `cash_due`     — leg of a cash (COD) order dispatched over the
+         *       Altaer network. On a completed order it's a `credit`: the driver
+         *       collected the full COD, so Altaer owes your workspace the
+         *       merchant slice. It flips to `debit` when you owe for a dispatch
+         *       that ran without a normal handoff (you canceled after pickup, or
+         *       a cash door-refusal left a shortfall).
+         *     - `card_payable` — leg of a card-prepaid order dispatched over the
+         *       Altaer network. Always a `debit`: you hold the prepaid revenue,
+         *       so you owe Altaer the delivery invoice (completed, canceled
+         *       after pickup, or refused alike).
          *     - `punitive`     — driver-cancel-after-pickup rows. Recovery leg
          *       that makes your workspace whole for the merchant slice the
          *       driver walked off with; sign is `credit` (you're being refunded,
          *       not paying for service).
-         *     - `settlement`   — a real-world money movement reducing your balance.
+         *     - `settlement`   — a real-world money movement clearing your balance.
          *     - `adjustment`   — admin correction.
          *
          *     The three types below appear ONLY for hub-internal own-fleet workspaces
@@ -1672,7 +1682,7 @@ export interface components {
          *     tenants using trusted-network fleets never see these — the writer applies
          *     symmetric obscurity so the underlying rows aren't attributed to the workspace.
          *
-         *     - `op_workspace`         — accrual between your workspace and its
+         *     - `operator_workspace`   — accrual between your workspace and its
          *       fulfilling operator on own-fleet direct-routing. Cash COD → operator
          *       owes you the merchant slice (`credit`); card prepay → you owe the
          *       operator the delivery fee (`debit`).
@@ -1684,7 +1694,7 @@ export interface components {
          *       `workspace.fleet_driver_balance.settled` webhook.
          * @enum {string}
          */
-        LedgerEntryType: "cash_due" | "card_payable" | "punitive" | "settlement" | "adjustment" | "op_workspace" | "fleet_commission" | "fleet_driver_payment";
+        LedgerEntryType: "cash_due" | "card_payable" | "punitive" | "settlement" | "adjustment" | "operator_workspace" | "fleet_commission" | "fleet_driver_payment";
         /**
          * @description `collected_from` = the platform took cash from you (you owed).
          *     `paid_to`        = the platform paid cash to you (we owed).
@@ -1707,15 +1717,15 @@ export interface components {
             currency: components["schemas"]["Currency"];
             /** @description Sum of `amount` over all entries. Equals your current balance. */
             net: number;
-            /** @description Σ over `cash_due` rows (cash you owed). */
+            /** @description Signed Σ over `cash_due` rows. Usually negative (COD merchant slices Altaer owes you); positive when cancel/refusal debits dominate. */
             cashDue: number;
-            /** @description Σ over `card_payable` rows (we owed you). */
+            /** @description Signed Σ over `card_payable` rows. Positive — delivery invoices you owe on prepaid orders. */
             cardPayable: number;
             /** @description Σ over `settlement` rows. */
             settlements: number;
             /** @description Σ over `adjustment` rows (admin corrections). */
             adjustments: number;
-            /** @description Count of order completions (cash_due + card_payable rows). */
+            /** @description Count of `cash_due` + `card_payable` rows (one per order leg). */
             owedOrdersCount: number;
             /** @description Σ delivery fees Altaer charged you across owed orders. */
             grossDeliveryFee: number;
@@ -1824,8 +1834,8 @@ export interface components {
         };
         /**
          * @description One per-order ledger contribution to a settlement. An order can
-         *     appear twice (cash buy-at-pickup: goods credit + delivery-fee
-         *     debit).
+         *     appear more than once when several of its ledger legs touch your
+         *     account.
          */
         SettlementItem: {
             /**
@@ -1841,12 +1851,15 @@ export interface components {
              */
             origin: "api" | "hub";
             /**
-             * @description The ledger event behind the item. `operator_workspace_payment`
-             *     appears only on own-fleet orders (the operator↔workspace
-             *     goods/fee leg); settle rows themselves are never items.
+             * @description The ledger family behind the item — the same vocabulary
+             *     `/finance/ledger` rows speak (the order-leg subset of
+             *     `LedgerEntryType`), so items join against ledger rows without
+             *     translation. `operator_workspace` appears only on own-fleet
+             *     orders (the operator↔workspace goods/fee leg); settle rows
+             *     themselves are never items.
              * @enum {string}
              */
-            type: "order_completion" | "order_cancel_punitive" | "operator_workspace_payment";
+            type: "cash_due" | "card_payable" | "punitive" | "operator_workspace";
             /**
              * @description Signed minor units (positive = you owed the platform).
              *     Per-origin item sums match `breakdown.<origin>`.

@@ -2,6 +2,20 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.40] — 2026-07-31
+
+Ledger-vocabulary unification: every finance surface now speaks the same flat entry types, and the type docs state the correct money direction.
+
+### Changed
+
+- **`LedgerEntryType` value renamed: `op_workspace` → `operator_workspace`.** Same rows, clearer name for the operator↔workspace accrual. If you matched the old string, update the branch — the API never emits `op_workspace` again.
+- **`SettlementItem.type` now speaks the flat ledger vocabulary** — enum is `cash_due | card_payable | punitive | operator_workspace` (was the raw stored types `order_completion | order_cancel_punitive | operator_workspace_payment`). Settlement items now join directly against `/finance/ledger` rows on `type` with no translation table.
+
+### Docs / spec corrections (no wire changes — the API always behaved this way)
+
+- **`cash_due` / `card_payable` descriptions had the money direction backwards.** They are payment-family tags, not directions — direction lives in `amount.direction`. Corrected semantics: `cash_due` on a completed order is a **credit** (the driver collected the full COD, Altaer owes your workspace the merchant slice; flips to debit on cancel-after-pickup / door-refusal shortfall); `card_payable` is always a **debit** (you hold the prepaid revenue and owe the delivery invoice).
+- `FinanceSummary.cashDue` / `cardPayable` documented as signed sums with the same corrected orientation; `owedOrdersCount` counts `cash_due`/`card_payable` rows (one per order leg), not "completions".
+
 ## [0.0.39] — 2026-07-30
 
 Spec-accuracy release: the OpenAPI document (and the types generated from it) now match the deployed API exactly. One behavior fix in the error layer.
