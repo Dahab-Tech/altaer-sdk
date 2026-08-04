@@ -400,8 +400,36 @@ export interface paths {
          * @description Every recorded cash movement, newest first. `collected_from` =
          *     the platform took cash from you (you owed); `paid_to` = it paid
          *     you (it owed).
+         *
+         *     For the total count in the same window, call the sibling
+         *     `/finance/settlements/count` — separated so page flips don't
+         *     repay the count aggregation.
          */
         get: operations["listSettlements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/me/finance/settlements/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count for the settlements window
+         * @description Total number of settlements in the same window your
+         *     `/finance/settlements` page slices. Separate endpoint so page
+         *     flips inside the same window don't repay the count aggregation —
+         *     cache the result and refetch only when the window
+         *     (`since`/`until`) changes.
+         */
+        get: operations["countSettlements"];
         put?: never;
         post?: never;
         delete?: never;
@@ -429,6 +457,56 @@ export interface paths {
          *     line-by-line audit against your own books.
          */
         get: operations["getSettlement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/me/finance/reports/pnl-per-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-order P&L for the workspace
+         * @description Every completed / canceled order in the window, one row each,
+         *     with the workspace-perspective P&L (`income` = merchant slice
+         *     + punitive recoveries, `cost` = delivery fee + priced VAT, `net`
+         *     = income − cost). Order-driven — same-order legs never split
+         *     across pages.
+         *
+         *     For per-currency totals + order count across the whole window,
+         *     call the sibling `/finance/reports/pnl-per-order/totals` and
+         *     cache it across page flips.
+         */
+        get: operations["getPnlPerOrderReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/me/finance/reports/pnl-per-order/totals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whole-window totals for the P&L report
+         * @description Per-currency sums of every row `/finance/reports/pnl-per-order`
+         *     returns for the same window, plus the order count. One fetch per
+         *     window — cache across page flips.
+         */
+        get: operations["getPnlPerOrderReportTotals"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2045,11 +2123,98 @@ export interface components {
             /** @description Total number of orders in the window (independent of `limit`/`offset`). */
             total: number;
         };
+        /**
+         * @description Items-only page. `limit`/`offset` count settlement rows. For
+         *     the total count in the same window, call the sibling
+         *     `/finance/settlements/count`.
+         */
         SettlementListResponse: {
             items: components["schemas"]["Settlement"][];
-            total: number;
             limit: number;
             offset: number;
+        };
+        SettlementCountResponse: {
+            /** @description Total number of settlements in the window (independent of `limit`/`offset`). */
+            total: number;
+        };
+        /**
+         * @description Terminal outcome from the workspace P&L's perspective.
+         *     `completed` — normal delivery; `workspace_canceled_post_dispatch` —
+         *     workspace canceled after dispatch (no income); `driver_abandoned_post_pickup`
+         *     — punitive scenario (income is the merchant recovery, not the sale).
+         * @enum {string}
+         */
+        PnlPerOrderStatus: "completed" | "workspace_canceled_post_dispatch" | "driver_abandoned_post_pickup";
+        /**
+         * @description One order's P&L row. All monetary fields are integer minor units
+         *     of `currency`. `costMinor = deliveryMinor + platformVatMinor`;
+         *     `netMinor = incomeMinor − costMinor`.
+         */
+        PnlPerOrderRow: {
+            /** Format: altaer-id */
+            orderId: string;
+            currency: components["schemas"]["Currency"];
+            /** Format: date-time */
+            createdAt: string;
+            status: components["schemas"]["PnlPerOrderStatus"];
+            paymentMethod: components["schemas"]["PaymentMethod"];
+            /** @description Merchant slice on `completed`; punitive recovery on `driver_abandoned_post_pickup`; 0 on `workspace_canceled_post_dispatch`. */
+            incomeMinor: number;
+            /** @description Merchant slice on `completed`; 0 on both canceled/punitive rows. */
+            goodsMinor: number;
+            /** @description Ex-VAT delivery fee snapshot. 0 on punitive rows (no service billed). */
+            deliveryMinor: number;
+            /** @description Priced VAT on the delivery. 0 on punitive rows. */
+            platformVatMinor: number;
+            /** @description `deliveryMinor + platformVatMinor`. */
+            costMinor: number;
+            /** @description `incomeMinor − costMinor`. */
+            netMinor: number;
+        };
+        /**
+         * @description Items-only page. `limit`/`offset` count orders. For per-currency
+         *     totals across the whole window, call the sibling
+         *     `/finance/reports/pnl-per-order/totals`.
+         */
+        PnlPerOrderItemsPage: {
+            /**
+             * Format: date
+             * @description Resolved lower bound (`YYYY-MM-DD`).
+             */
+            since: string;
+            /**
+             * Format: date
+             * @description Resolved upper bound (`YYYY-MM-DD`).
+             */
+            until: string;
+            items: components["schemas"]["PnlPerOrderRow"][];
+            limit: number;
+            offset: number;
+        };
+        /** @description Per-currency whole-window totals. Same-named fields as `PnlPerOrderRow`, summed across every order in the window. */
+        PnlPerOrderTotals: {
+            currency: components["schemas"]["Currency"];
+            incomeMinor: number;
+            goodsMinor: number;
+            deliveryMinor: number;
+            platformVatMinor: number;
+            costMinor: number;
+            netMinor: number;
+        };
+        PnlPerOrderTotalsResponse: {
+            /**
+             * Format: date
+             * @description Resolved lower bound (`YYYY-MM-DD`).
+             */
+            since: string;
+            /**
+             * Format: date
+             * @description Resolved upper bound (`YYYY-MM-DD`).
+             */
+            until: string;
+            totals: components["schemas"]["PnlPerOrderTotals"][];
+            /** @description Total number of orders in the window (independent of `limit`/`offset` on the items page). */
+            total: number;
         };
         /**
          * @description Closed-window statement with opening + closing balances — it
@@ -2693,6 +2858,32 @@ export interface operations {
             401: components["responses"]["AuthError"];
         };
     };
+    countSettlements: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                since?: string;
+                /** @description Inclusive upper bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Total settlements in the window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettlementCountResponse"];
+                };
+            };
+            401: components["responses"]["AuthError"];
+        };
+    };
     getSettlement: {
         parameters: {
             query?: never;
@@ -2716,6 +2907,61 @@ export interface operations {
             };
             401: components["responses"]["AuthError"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getPnlPerOrderReport: {
+        parameters: {
+            query?: {
+                /** @description Max orders per page. */
+                limit?: number;
+                offset?: number;
+                /** @description Inclusive lower bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                since?: string;
+                /** @description Inclusive upper bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated per-order P&L rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlPerOrderItemsPage"];
+                };
+            };
+            401: components["responses"]["AuthError"];
+        };
+    };
+    getPnlPerOrderReportTotals: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                since?: string;
+                /** @description Inclusive upper bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whole-window totals + order count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlPerOrderTotalsResponse"];
+                };
+            };
+            401: components["responses"]["AuthError"];
         };
     };
     getStatement: {

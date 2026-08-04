@@ -3,8 +3,14 @@ import type {
   BalanceResponse,
   FinanceLedgerCountInput,
   FinancePaginationInput,
+  FinanceReportInput,
+  FinanceReportTotalsInput,
+  FinanceSettlementsCountInput,
   LedgerCountResponse,
   LedgerListResponse,
+  PnlPerOrderItemsPage,
+  PnlPerOrderTotalsResponse,
+  SettlementCountResponse,
   SettlementListResponse,
   SettlementWithItems,
   Statement,
@@ -56,13 +62,60 @@ export class FinanceResource {
 
   /** Paginated settlement history. `direction='collected_from'` means
    *  the platform took cash FROM you; `direction='paid_to'` means the
-   *  platform paid cash TO you. */
+   *  platform paid cash TO you. Call `settlementsCount` for the total
+   *  count in the same window (cache across page flips). */
   async settlements(
     input?: FinancePaginationInput,
     opts?: RequestOptions
   ): Promise<SettlementListResponse> {
     return this.http.get<SettlementListResponse>(
       `/api/v1/workspaces/me/finance/settlements${paginationQs(input)}`,
+      opts
+    );
+  }
+
+  /** Total number of settlements in the same window
+   *  `settlements(...)` slices. Cache per window — refetch only on
+   *  window (`since`/`until`) change, not on every page flip. */
+  async settlementsCount(
+    input?: FinanceSettlementsCountInput,
+    opts?: RequestOptions
+  ): Promise<SettlementCountResponse> {
+    const params = new URLSearchParams();
+    if (input?.since) params.set('since', input.since);
+    if (input?.until) params.set('until', input.until);
+    const qs = params.toString();
+    return this.http.get<SettlementCountResponse>(
+      `/api/v1/workspaces/me/finance/settlements/count${qs ? `?${qs}` : ''}`,
+      opts
+    );
+  }
+
+  /** Per-order P&L report. One row per completed/canceled order in the
+   *  window, workspace-perspective P&L (`income` = merchant slice +
+   *  punitive recoveries, `cost` = delivery fee + priced VAT, `net` =
+   *  income − cost). Call `reportTotals(...)` for per-currency
+   *  whole-window sums + order count (cache across page flips). */
+  async report(input?: FinanceReportInput, opts?: RequestOptions): Promise<PnlPerOrderItemsPage> {
+    return this.http.get<PnlPerOrderItemsPage>(
+      `/api/v1/workspaces/me/finance/reports/pnl-per-order${paginationQs(input)}`,
+      opts
+    );
+  }
+
+  /** Whole-window per-currency P&L totals + order count for the same
+   *  window `report(...)` slices. Cache per window — refetch only on
+   *  window change, not on every page flip. */
+  async reportTotals(
+    input?: FinanceReportTotalsInput,
+    opts?: RequestOptions
+  ): Promise<PnlPerOrderTotalsResponse> {
+    const params = new URLSearchParams();
+    if (input?.since) params.set('since', input.since);
+    if (input?.until) params.set('until', input.until);
+    const qs = params.toString();
+    return this.http.get<PnlPerOrderTotalsResponse>(
+      `/api/v1/workspaces/me/finance/reports/pnl-per-order/totals${qs ? `?${qs}` : ''}`,
       opts
     );
   }

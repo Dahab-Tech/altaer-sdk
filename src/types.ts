@@ -89,6 +89,33 @@ export interface FinanceLedgerCountInput {
   until?: string;
 }
 
+/** Optional query for `client.finance.settlementsCount(input?)`. Same
+ *  window semantics as `settlements(...)` — call this once per window
+ *  and cache the result across page flips. */
+export interface FinanceSettlementsCountInput {
+  since?: string;
+  until?: string;
+}
+
+/** Optional query for `client.finance.report(input?)` — per-order P&L
+ *  items. `since` / `until` are inclusive YYYY-MM-DD bounds on Order
+ *  `createdAt`; omit either side for unbounded. `limit`/`offset` count
+ *  orders (rows). */
+export interface FinanceReportInput {
+  limit?: number;
+  offset?: number;
+  since?: string;
+  until?: string;
+}
+
+/** Optional query for `client.finance.reportTotals(input?)`. Same window
+ *  semantics as `report(...)` — call this once per window and cache the
+ *  result across page flips. */
+export interface FinanceReportTotalsInput {
+  since?: string;
+  until?: string;
+}
+
 /** Optional query for `client.finance.statement(input?)`.
  *  `entries` paginates via `limit`/`offset`; `openingBalance`,
  *  `closingBalance`, `total`, and `summary` are window-scoped and
@@ -147,6 +174,18 @@ export type LedgerListResponse = Schemas['LedgerListResponse'];
 /** Sibling count for the ledger paginator. Cache per window. */
 export type LedgerCountResponse = Schemas['LedgerCountResponse'];
 export type SettlementListResponse = Schemas['SettlementListResponse'];
+/** Sibling count for the settlements paginator. Cache per window. */
+export type SettlementCountResponse = Schemas['SettlementCountResponse'];
+/** One row of the per-order P&L report. See `finance.report(...)`. */
+export type PnlPerOrderRow = Schemas['PnlPerOrderRow'];
+/** Terminal outcome bucket on a `PnlPerOrderRow`. */
+export type PnlPerOrderStatus = Schemas['PnlPerOrderStatus'];
+/** Response of `client.finance.report(...)` — items-only page. */
+export type PnlPerOrderItemsPage = Schemas['PnlPerOrderItemsPage'];
+/** Per-currency whole-window totals on a `PnlPerOrderTotalsResponse`. */
+export type PnlPerOrderTotals = Schemas['PnlPerOrderTotals'];
+/** Response of `client.finance.reportTotals(...)`. Cache per window. */
+export type PnlPerOrderTotalsResponse = Schemas['PnlPerOrderTotalsResponse'];
 /** One line in `SettlementWithItems.items[]` — a single per-order
  *  ledger contribution that rolled into the settle. Tagged with
  *  `origin` and `type` so a consumer can filter their slice

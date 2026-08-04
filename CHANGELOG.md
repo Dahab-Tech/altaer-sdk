@@ -2,6 +2,39 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.45] — 2026-08-05
+
+`/finance/settlements` now matches the items/count split already in place for `/finance/ledger`, and per-order P&L is exposed to tenants for the first time (previously hub-only).
+
+### Breaking
+
+- **`GET /api/v1/workspaces/me/finance/settlements` no longer returns `total`.** The response is `{ items, limit, offset }` — the count moved to a new sibling endpoint so page flips within the same window stop repaying the count aggregation.
+
+  Migration:
+
+  ```ts
+  // Before (0.0.44):
+  const page = await al.finance.settlements({ since, until });
+  console.log(`showing ${page.items.length} of ${page.total}`);
+
+  // After (0.0.45):
+  const [page, { total }] = await Promise.all([
+    al.finance.settlements({ since, until }),
+    al.finance.settlementsCount({ since, until }), // cache per window
+  ]);
+  console.log(`showing ${page.items.length} of ${total}`);
+  ```
+
+  `settlementsCount` is cheap; cache it against the `(since, until)` pair and refetch only when the window changes.
+
+### Added
+
+- **`GET /api/v1/workspaces/me/finance/settlements/count` → `{ total }`.** Sibling of `/settlements`, mirroring the existing `/finance/ledger/count` pattern. Exposed as `al.finance.settlementsCount({ since?, until? })`.
+- **`GET /api/v1/workspaces/me/finance/reports/pnl-per-order` → `{ items, limit, offset }`.** Per-order P&L report for the workspace — one row per completed/canceled order in the window, workspace-perspective (`incomeMinor` = merchant slice + punitive recoveries, `costMinor` = delivery fee + priced VAT, `netMinor` = income − cost). Order-driven pagination — same-order legs never split across pages. Exposed as `al.finance.report({ since?, until?, limit?, offset? })`. Previously hub-only.
+- **`GET /api/v1/workspaces/me/finance/reports/pnl-per-order/totals` → `{ since, until, totals, total }`.** Per-currency whole-window sums (same-named fields as the row) + order count. Cache per window. Exposed as `al.finance.reportTotals({ since?, until? })`.
+- **`SettlementCountResponse`, `PnlPerOrderRow`, `PnlPerOrderStatus`, `PnlPerOrderItemsPage`, `PnlPerOrderTotals`, `PnlPerOrderTotalsResponse`** exported as SDK types.
+- **`FinanceSettlementsCountInput`, `FinanceReportInput`, `FinanceReportTotalsInput`** input types.
+
 ## [0.0.44] — 2026-08-05
 
 Wire-shape reshuffles across `/finance/ledger` and `Settlement.provider`. No math changes vs 0.0.43 — same numbers, cleaner shapes. Three breaking response-shape changes, all bundled here so consumers do one migration instead of three.
