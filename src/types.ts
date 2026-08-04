@@ -137,6 +137,12 @@ export type Settlement = Schemas['Settlement'];
 export type SettlementDirection = Schemas['SettlementDirection'];
 /** One item in the paginated `/finance/ledger` stream — an order and its ledger legs. */
 export type LedgerOrderGroup = Schemas['LedgerOrderGroup'];
+/** Per-order economics snapshot on `LedgerOrderGroup.economics`. Hoisted
+ *  from the entries — every leg of an order shares these numbers. */
+export type LedgerOrderGroupEconomics = Schemas['LedgerOrderGroupEconomics'];
+/** Cancel context on `LedgerOrderGroup.cancellation`. Non-null when the
+ *  order was canceled (any scenario); null on completed orders. */
+export type LedgerOrderGroupCancellation = Schemas['LedgerOrderGroupCancellation'];
 export type LedgerListResponse = Schemas['LedgerListResponse'];
 /** Sibling count for the ledger paginator. Cache per window. */
 export type LedgerCountResponse = Schemas['LedgerCountResponse'];

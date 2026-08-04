@@ -70,6 +70,8 @@ export type {
   LedgerEntryType,
   LedgerListResponse,
   LedgerOrderGroup,
+  LedgerOrderGroupCancellation,
+  LedgerOrderGroupEconomics,
   OperatorAltaerPosition,
   OperatorWorkspacePosition,
   ListOrdersInput,

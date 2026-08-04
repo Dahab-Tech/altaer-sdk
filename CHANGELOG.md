@@ -2,27 +2,114 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.44] — 2026-08-05
+
+Wire-shape reshuffles across `/finance/ledger` and `Settlement.provider`. No math changes vs 0.0.43 — same numbers, cleaner shapes. Three breaking response-shape changes, all bundled here so consumers do one migration instead of three.
+
+### Breaking
+
+- **`LedgerOrderGroup.entries[]` items shrunk to `{ id, type, amount }`.** Order-facts previously repeated on every entry are hoisted to the parent group so the wire stops duplicating them across every leg of a multi-leg order. New group fields:
+
+  - `writtenAt` (`string`) — ledger batch write time (differs from `createdAt` for post-completion writes; a completed order's `createdAt` is when it was placed, `writtenAt` is when the ledger legs were finalized).
+  - `currency` (`Currency`) — every leg of an order shares one currency (single-currency-per-batch invariant).
+  - `economics` (`LedgerOrderGroupEconomics`) — `{ deliveryFee, prepaidAmount, orderTotalAmount, platformFeeVat, platformCommissionAmount, platformCommissionRate }`. Snapshot at ledger-write time, same across every leg.
+  - `cancellation` (`LedgerOrderGroupCancellation | null`) — `{ canceledBy, statusBeforeCancel }` on canceled orders; `null` on completed.
+
+  Removed from `LedgerEntry` (read from the parent group instead): `currency`, `orderId`, `externalOrderId`, `deliveryFee`, `prepaidAmount`, `orderTotalAmount`, `platformFeeVat`, `canceledBy`, `statusBeforeCancel`, `note`, `createdAt`.
+
+  Migration:
+
+  ```ts
+  // Before (0.0.43):
+  for (const group of page.items) {
+    for (const row of group.entries) {
+      console.log(row.currency, row.deliveryFee, row.orderId);
+    }
+  }
+  // After (0.0.44):
+  for (const group of page.items) {
+    console.log(group.currency, group.economics.deliveryFee, group.orderId);
+    for (const row of group.entries) {
+      console.log(row.type, row.amount);
+    }
+  }
+  ```
+
+- **`amount.direction` enum renamed `debit` | `credit` → `in` | `out`.** Workspace POV: `out` = money going out of your balance (an obligation-adding event — you owe more, or you paid); `in` = money coming into your balance (an obligation-reducing event — you were paid, or a debt was cleared). Semantic mapping is exact: old `debit` → new `out`, old `credit` → new `in`. No math changes; just a clearer name.
+
+  Migration:
+
+  ```ts
+  // Before:
+  const signed =
+    row.amount.direction === 'debit' ? row.amount.value : -row.amount.value;
+  // After:
+  const signed =
+    row.amount.direction === 'out' ? row.amount.value : -row.amount.value;
+  ```
+
+- **`Settlement.provider` gained `psp` field; `method` values simplified.** The provider block now discriminates PSP explicitly instead of encoding it into a composite label:
+
+  ```ts
+  // Before (0.0.43):
+  provider: { method: 'stripe_checkout',  ref: 'cs_...' }
+  provider: { method: 'paymob_checkout',  ref: '12345'  }
+  provider: { method: 'psp',              ref: 'pi_...' }  // saved-card MIT
+  provider: { method: 'manual_cash',      ref: null      }
+
+  // After (0.0.44):
+  provider: { psp: 'stripe', method: 'checkout', ref: 'cs_...' }
+  provider: { psp: 'paymob', method: 'checkout', ref: '12345' }
+  provider: { psp: 'stripe', method: 'card',     ref: 'pi_...' }
+  provider: { psp: null,     method: 'manual_cash', ref: null }
+  ```
+
+  `psp: 'stripe' | 'paymob' | null` says which processor moved the money (null for off-platform rails like manual cash); `method` is the semantic channel (`checkout`, `card`, `disburse`, `manual_cash`, `instapay`, `vodafone_cash`, `fawry_pay`, …). Refund tooling and per-PSP reconciliation now route on `provider.psp` — no label parsing.
+
+  Migration:
+
+  ```ts
+  // Before:
+  if (
+    s.provider.method === 'stripe_checkout' ||
+    s.provider.method === 'stripe_card'
+  ) {
+    /* stripe */
+  }
+  // After:
+  if (s.provider.psp === 'stripe') {
+    /* stripe */
+  }
+  ```
+
+### Added
+
+- **`LedgerOrderGroupEconomics`, `LedgerOrderGroupCancellation`** exported as SDK types for consumers that want to type the new group fields explicitly.
+
 ## [0.0.43] — 2026-08-04
 
-Balance envelope correctness + performance. Response shape is unchanged from 0.0.42 — this release fixes two behavioral bugs in the balance math and dramatically speeds up the endpoint. Consumers that were seeing surprising Card A `net` numbers or an inflated Card B `operatorAltaer.net` should see corrected values without any code change.
+Balance envelope correctness + performance. Response shape unchanged from 0.0.42 — this release fixes several correctness bugs in the balance math and dramatically speeds up the endpoint. Consumers seeing surprising Card A `net` numbers or an inflated Card B `operatorAltaer.net` should see corrected values without any code change.
 
 ### Fixed
 
 - **`workspaceAltaer.net` sign math**: 0.0.42 computed net by subtracting SIGNED sums (`deliveryOwedToAltaer − merchantHeldByAltaer`) but the two fields were themselves signed (the "held" side is a credit / negative), so `net` came out inflated (subtracting a negative). Now composed from magnitudes: `|delivery| − |held|`. Example: workspace with $100 held by Altaer + $30 owed to Altaer → 0.0.42 returned `net: 130`, now returns `net: -70` (Altaer owes you $70). Matches the sign convention docs promised.
 - **`workspaceAltaer.merchantHeldByAltaer` + `deliveryOwedToAltaer`**: now truly magnitudes (≥ 0) as documented. 0.0.42 returned signed sums, so `merchantHeldByAltaer` came out negative — inconsistent with the "magnitude Altaer is holding" description.
+- **`workspaceAltaer` magnitudes now offset by settlements**: 0.0.42's reader excluded `settlement` / `settlement_reversal` rows entirely, so the two magnitude fields showed LIFETIME accruals instead of CURRENT unsettled state. A workspace that had accrued $100 in merchant and settled all of it still saw `merchantHeldByAltaer: 100`. Fixed to include settle rows and bucket them by ledger direction (`paid_to` release → merchant side, `collected_from` release → delivery side). Fully-settled workspaces now correctly report zeros. `unsettledOrdersCount` also switched from row-count (double-counted trusted-network orders that write two Card A legs) to distinct-order count.
 - **`workspaceAltaer` for own-fleet-only tenants**: was pulling in own-fleet operator↔workspace legs (which belong on Card C), producing enormous inflated numbers. Now scoped strictly to `network_user.*` platform-touching legs.
 - **`operatorAltaer.net` semantics**: now WORKSPACE-SCOPED (this workspace's commission slice only) instead of operator-aggregate. Works correctly because the settle writer already stamps `workspaceId` on each per-workspace settle slice — filtering by `workspaceId` gives you `accruals − attributed settlements`. For single-workspace operators this is identical to operator-total; for multi-workspace operators, each workspace sees only its own slice.
-- **`/finance/ledger` order groups no longer include foreign legs on trusted-network orders**: previously the per-order `entries` array returned all 4 legs (workspace↔platform + operator↔platform internal clearing) because they all share the same `workspaceId` snapshot. Now filtered by workspace-touching (`fromAccount` OR `toAccount` = your workspace's account), so you see only the leg you're a party to. Trusted-network tenants: 1 leg per order instead of 4.
+- **`operatorWorkspace.net` now offset by off-platform settles**: same class of bug as `workspaceAltaer` above — the Card C reader excluded `settlement` / `settlement_reversal` rows, so off-platform settles never reduced the net. A workspace that accrued a $367 tab with its operator and settled it off-platform still saw `operatorWorkspace.net: -367`. Fixed to include settle rows with a workspace↔operator account-pair guard (so Card A/B settle rows with the same `workspaceId` stamp don't leak in).
+- **`/finance/ledger` order groups return the legs THIS tenant is a party to**: previously (pre-0.0.43) the per-order `entries` array returned all 4 legs on trusted-network orders (workspace↔platform + a stranger operator↔platform internal clearing) because they all share the same `workspaceId` snapshot. Now filtered by account-touching:
+  - **Trusted-network tenants** (using the Altaer network) see only their workspace↔platform legs (1 leg per order) — the operator's internal clearing legs are correctly hidden (that operator is a stranger to you).
+  - **Own-fleet tenants** (running their own fleet — you ARE the operator) see all 3 legs of a direct-routing order: workspace↔operator, driver↔operator, operator→platform commission. Post-fix: mid-refactor a too-narrow filter was hiding the driver + commission legs on own-fleet orders, showing only 1 of 3. Corrected in the same release.
 
 ### Performance
 
 - **`/finance/balance`** typical latency dropped ~50% (measured on production workloads: 800ms → 400ms). Added a compound `(workspaceId, type)` index on ledger entries and rewrote the three composer readers to be type-anchored — Mongo now jumps directly to the relevant type-subset instead of scanning every workspace row. Trusted-user tenants with no commission activity see near-instant returns for Card B/C (zero matching rows via index probe).
 
-### No shape changes
+### Notes
 
-- All fields, types, methods, and response schemas are unchanged from 0.0.42.
-- SDK regeneration produces the identical TypeScript type shape — the only diff in `sdk/src/generated/api.ts` is refreshed schema description comments (updated `operatorAltaer` narrative). No `.d.ts` shape change; existing type-only consumers see no compile impact.
-- Consumers already integrated with 0.0.42's shape need no code changes to pick up the fixes.
+- Balance envelope shape is unchanged from 0.0.42 — the correctness fixes above land without any code change on the balance consumers.
+- Ledger shape reshuffle is the only breaking wire change in 0.0.43; regenerate types (`openapi-typescript`) and follow the two migrations above.
 
 ## [0.0.42] — 2026-08-04
 

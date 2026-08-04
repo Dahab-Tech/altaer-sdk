@@ -1133,18 +1133,24 @@ export interface components {
         };
         /**
          * @description Rail/channel that moved the money — same shape returned on the
-         *     Settlement row.
+         *     Settlement row. `psp` says which processor handled the move;
+         *     `method` is the semantic channel independent of PSP.
          */
         SettlementProviderWire: {
             /**
-             * @description Channel that moved the money — an open string; new PSP
-             *     integrations add labels. Common: `manual_cash`,
-             *     `stripe_checkout`, `paymob_checkout`, `paymob_disburse`,
-             *     `stripe_transfer`, or a saved-method kind (`card`,
-             *     `instapay`, `vodafone_cash`, `fawry_pay`).
+             * @description Which PSP moved the money. Null for off-platform rails
+             *     (`manual_cash`, off-platform operator↔workspace records).
+             * @enum {string|null}
+             */
+            psp: "stripe" | "paymob" | null;
+            /**
+             * @description Semantic channel — an open string; new integrations add
+             *     labels. Common: `checkout` (hosted URL), `card` (saved-card
+             *     MIT), `disburse` (payout), `transfer` (Stripe Connect ACH),
+             *     `manual_cash`, `instapay`, `vodafone_cash`, `fawry_pay`.
              */
             method: string | null;
-            /** @description PSP reference. Null for manual_cash. */
+            /** @description PSP reference. Null for manual_cash / off-platform rows. */
             ref: string | null;
         };
         /** @description Signed balance snapshot before/after the settle (minor units). */
@@ -1673,8 +1679,8 @@ export interface components {
         /**
          * @description Structured `<scope>.<outcome>.<direction>` name naming what happened
          *     and between which two accounts. Direction of money in your books
-         *     still lives on `amount.direction` (`debit` increases what you owe
-         *     the platform, `credit` decreases it) — the `_to_` in the type name
+         *     still lives on `amount.direction` (`out` = money going out of your
+         *     balance, `in` = money coming into it) — the `_to_` in the type name
          *     is the obligation direction of the underlying leg, not your view.
          *
          *     Segments:
@@ -1843,31 +1849,20 @@ export interface components {
             grossDeliveryFee: number;
         };
         /**
-         * @description One ledger row (minor units of `currency`). `amount` is a grouped
-         *     `{ value, direction }` block — `value` is always ≥ 0; `direction`
-         *     says whether the row increases (`debit`) or decreases (`credit`)
-         *     what the workspace owes the platform.
+         * @description One ledger leg (minor units of the parent group's `currency`).
+         *     Trimmed to just what varies per leg — order-facts (`currency`,
+         *     `economics`, `cancellation`, `writtenAt`) live on the parent
+         *     `LedgerOrderGroup` since every leg in a group shares them.
+         *
+         *     `amount` is a grouped `{ value, direction }` block: `value` is
+         *     always ≥ 0; `direction` says whether the leg moves money OUT of
+         *     (`out`) or IN to (`in`) the workspace's balance.
          */
         LedgerEntry: {
             /** Format: altaer-id */
             id: string;
-            currency: components["schemas"]["Currency"];
             type: components["schemas"]["LedgerEntryType"];
-            /** Format: altaer-id */
-            orderId: string | null;
-            /** @description Your own order id, echoed back if set on order creation. */
-            externalOrderId: string | null;
             amount: components["schemas"]["LedgerEntryAmount"];
-            deliveryFee: number | null;
-            prepaidAmount: number | null;
-            orderTotalAmount: number | null;
-            platformFeeVat: number | null;
-            /** @description Set only on cancel-related rows. */
-            canceledBy: string | null;
-            statusBeforeCancel: string | null;
-            note: string | null;
-            /** Format: date-time */
-            createdAt: string | null;
         };
         /**
          * @description Grouped workspace-perspective amount. `value` is always ≥ 0 —
@@ -1877,10 +1872,10 @@ export interface components {
             /** @description Magnitude of the workspace↔platform delta (minor units), always ≥ 0. */
             value: number;
             /**
-             * @description `debit` increases what you owe the platform (delivery fee); `credit` decreases it (COD held for you, adjustments in your favor).
+             * @description Workspace POV. `out` = money going out of your balance (an obligation-adding event — you owe more, or you paid). `in` = money coming in (an obligation-reducing event — you were paid, or a debt was cleared).
              * @enum {string}
              */
-            direction: "debit" | "credit";
+            direction: "in" | "out";
         };
         /**
          * @description A real-world money movement clearing your balance.
@@ -1979,6 +1974,10 @@ export interface components {
          *     legs the workspace has visibility on for that order. Entries are
          *     ordered oldest-first so the writer's leg sequence reads
          *     top-to-bottom.
+         *
+         *     Order-facts (`currency`, `economics`, `cancellation`, `writtenAt`)
+         *     are hoisted onto the group — every leg in a group shares them, so
+         *     the wire doesn't duplicate them per entry.
          */
         LedgerOrderGroup: {
             /** Format: altaer-id */
@@ -1990,7 +1989,46 @@ export interface components {
              * @description Order.createdAt — the anchor used for group sort/pagination.
              */
             createdAt: string;
+            /**
+             * Format: date-time
+             * @description Ledger batch write time (all legs in the group were written
+             *     together). Differs from `createdAt` on post-completion writes
+             *     — a completed order's `createdAt` is when it was placed;
+             *     `writtenAt` is when the ledger legs were finalized.
+             */
+            writtenAt: string;
+            currency: components["schemas"]["Currency"];
+            economics: components["schemas"]["LedgerOrderGroupEconomics"];
+            /** @description Non-null when the order was canceled (any cancel scenario); null on completed orders. */
+            cancellation: components["schemas"]["LedgerOrderGroupCancellation"] | null;
             entries: components["schemas"]["LedgerEntry"][];
+        };
+        /**
+         * @description Per-order economics snapshot — same values across every leg of
+         *     the order, so hoisted to the group. Nullable fields are 0 in
+         *     tax-off jurisdictions / cash-only flows respectively.
+         */
+        LedgerOrderGroupEconomics: {
+            deliveryFee: number;
+            prepaidAmount: number;
+            orderTotalAmount: number;
+            /** @description Altaer's VAT on its earn slice (0 in tax-off jurisdictions). */
+            platformFeeVat: number;
+            /**
+             * @description Altaer's commission cut for this order. Null on scenarios
+             *     where commission doesn't fire (e.g. customer-refused return
+             *     trip, `commissionFixedAmount=0`).
+             */
+            platformCommissionAmount: number | null;
+            /** @description Commission rate at owed-time (decimal in [0, 1]). */
+            platformCommissionRate: number | null;
+        };
+        /** @description Cancel context. Present only on canceled orders; null on completed. */
+        LedgerOrderGroupCancellation: {
+            /** @description Who canceled: `workspace`, `driver`, `dropoff` (customer refused), or `admin`. */
+            canceledBy: string | null;
+            /** @description Order status at cancel time (e.g. `dispatched`, `pickedUp`). */
+            statusBeforeCancel: string;
         };
         /**
          * @description Order-grouped page. `limit`/`offset` count **orders** — one item
