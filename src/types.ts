@@ -68,19 +68,23 @@ export interface ListOrdersInput {
 
 // ── Finance request inputs ───────────────────────────────────────────
 
-/** Optional query for `client.finance.overview(input?)`. */
-export interface FinanceOverviewInput {
-  /** ISO date `YYYY-MM-DD`. Filters to entries on or after this date.
-   *  Use the start of your monthly close period for a per-month rollup. */
-  since?: string;
-}
-
 /** Optional query for `client.finance.ledger(input?)` and
  *  `client.finance.settlements(input?)`. `since` / `until` are inclusive
- *  YYYY-MM-DD bounds on `createdAt`; omit either side for unbounded. */
+ *  YYYY-MM-DD bounds on `createdAt`; omit either side for unbounded.
+ *
+ *  For `finance.ledger(...)` specifically, `limit`/`offset` count
+ *  **orders**, not entries — pages don't split same-order legs. */
 export interface FinancePaginationInput {
   limit?: number;
   offset?: number;
+  since?: string;
+  until?: string;
+}
+
+/** Optional query for `client.finance.ledgerCount(input?)`. Same window
+ *  semantics as `ledger(...)` — call this once per window and cache the
+ *  result across page flips. */
+export interface FinanceLedgerCountInput {
   since?: string;
   until?: string;
 }
@@ -109,14 +113,33 @@ export type RatingResponse = Schemas['RatingResponse'];
 export type OrderFinancials = Schemas['OrderFinancials'];
 
 // Finance responses.
+/** Three-slice envelope, single-currency (workspace's currency at the root).
+ *  `workspaceAltaer` — your workspace's position vs Altaer.
+ *  `operatorAltaer` — commission on THIS workspace's orders only (null
+ *  unless you operate a fleet).
+ *  `operatorWorkspace` (singular) — off-platform position between your
+ *  workspace and its operator (null unless you operate a fleet).
+ *  Each slice is independently nullable — use presence to decide
+ *  visibility. */
 export type BalanceResponse = Schemas['BalanceResponse'];
+/** One slice of `BalanceResponse.workspaceAltaer`. */
+export type WorkspaceAltaerPosition = Schemas['WorkspaceAltaerPosition'];
+/** One slice of `BalanceResponse.operatorAltaer`. */
+export type OperatorAltaerPosition = Schemas['OperatorAltaerPosition'];
+/** One slice of `BalanceResponse.operatorWorkspace` (singular — workspace vs its operator). */
+export type OperatorWorkspacePosition = Schemas['OperatorWorkspacePosition'];
+/** Surfaced inside `Statement.summary` — the standalone
+ *  `/finance/summary` endpoint has been removed. */
 export type FinanceSummary = Schemas['FinanceSummary'];
-export type FinanceOverview = Schemas['FinanceOverview'];
 export type LedgerEntry = Schemas['LedgerEntry'];
 export type LedgerEntryType = Schemas['LedgerEntryType'];
 export type Settlement = Schemas['Settlement'];
 export type SettlementDirection = Schemas['SettlementDirection'];
+/** One item in the paginated `/finance/ledger` stream — an order and its ledger legs. */
+export type LedgerOrderGroup = Schemas['LedgerOrderGroup'];
 export type LedgerListResponse = Schemas['LedgerListResponse'];
+/** Sibling count for the ledger paginator. Cache per window. */
+export type LedgerCountResponse = Schemas['LedgerCountResponse'];
 export type SettlementListResponse = Schemas['SettlementListResponse'];
 /** One line in `SettlementWithItems.items[]` — a single per-order
  *  ledger contribution that rolled into the settle. Tagged with

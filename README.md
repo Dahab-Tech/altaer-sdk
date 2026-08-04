@@ -58,7 +58,7 @@ console.log(order.id, order.status, order.tracking?.url);
 
 The full SDK surface:\
 `al.orders.*` (create / get / list / cancel / createReturn / redispatch / quote / rate)\
-`al.finance.*` (balance / summary / overview / ledger / settlements / getSettlement / statement)\
+`al.finance.*` (balance / ledger / ledgerCount / settlements / getSettlement / statement)\
 `al.workspace.*` (getProfile / updateProfile / rotateCredentials / setWebhookUrl)\
 `al.tracking.subscribe()` for live driver GPS.
 

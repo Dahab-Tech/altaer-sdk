@@ -293,55 +293,36 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Current workspace balance
-         * @description Your signed balance with the platform: positive = you owe,
-         *     negative = the platform owes you. Minor units of your workspace
-         *     currency.
+         * Current workspace balances (three-slice envelope)
+         * @description Three money positions this workspace has visibility on, in one
+         *     response. Every slice is **workspace-scoped** (never operator-
+         *     aggregated) and **single-currency** (the workspace's own currency
+         *     at the envelope root). Nullable slices carry visibility — non-
+         *     null means "this card applies to you".
+         *
+         *     Sign convention on every `.net` field: **positive = YOU owe them,
+         *     negative = they owe YOU** — same rule across all three slices.
+         *
+         *     - **`workspaceAltaer`** — your workspace's position with Altaer.
+         *       Non-null for every tenant using the Altaer network. Null only
+         *       when you're an own-fleet-only operator with a zero Altaer
+         *       position. Widens `.net` with `merchantHeldByAltaer` +
+         *       `deliveryOwedToAltaer` + `unsettledOrdersCount` for reconciliation.
+         *     - **`operatorAltaer`** — commission balance your operator owes
+         *       Altaer on **this workspace's orders only** (workspace-scoped).
+         *       Includes settlement offsets: the commission-settle writer stamps
+         *       `workspaceId` on each per-workspace settle slice, so accruals
+         *       minus attributed settlements = actionable balance for this
+         *       workspace. Null unless you operate a fleet.
+         *     - **`operatorWorkspace`** (singular) — off-platform position between
+         *       your workspace and its operator (own-fleet direct-routing
+         *       bookkeeping). Null unless you operate a fleet.
+         *
+         *     `asOf` is the server clock when the envelope was composed —
+         *     socket handlers use it to drop a hydration GET that landed after
+         *     a fresher push.
          */
         get: operations["getBalance"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/me/finance/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Lifetime finance summary
-         * @description Lifetime aggregate of every ledger row on your workspace, split
-         *     by entry type. Single currency — your workspace's.
-         */
-        get: operations["getFinanceSummary"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/me/finance/overview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Tenant-perspective finance overview
-         * @description Reconciliation rollup: sales, Altaer invoice totals, reclaimable
-         *     VAT, order/settlement counts. Pass `since` (ISO date) to start
-         *     the rollup at your close period.
-         */
-        get: operations["getFinanceOverview"];
         put?: never;
         post?: never;
         delete?: never;
@@ -358,12 +339,47 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Paginated ledger entries
-         * @description Per-row ledger history (completions, cancels, settlements,
-         *     adjustments), newest first. Rows snapshot the economics at write
-         *     time, so history stays correct even if rates change later.
+         * Paginated ledger, grouped by order
+         * @description One item per order in the window (newest first). Each group
+         *     carries the ledger legs the workspace has visibility on for that
+         *     order, ordered oldest-first so the writer's leg sequence reads
+         *     top-to-bottom.
+         *
+         *     Pagination is **order-driven** — `limit`/`offset` count orders,
+         *     not individual entries. Same-order legs are always returned
+         *     together, so paging never splits an order across two pages.
+         *
+         *     Settlements + adjustments do not appear here (they don't belong
+         *     to an order); use `/finance/settlements` for that stream.
+         *
+         *     For the total order count in the window, call the sibling
+         *     `/finance/ledger/count` — separated so page flips don't repay
+         *     the count aggregation.
          */
         get: operations["listLedger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/me/finance/ledger/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Order count for the ledger window
+         * @description Total number of orders in the same window your `/finance/ledger`
+         *     page slices. Separate endpoint so page flips inside the same
+         *     window don't repay the count aggregation — cache the result and
+         *     refetch only when the window (`since`/`until`) changes.
+         */
+        get: operations["countLedger"];
         put?: never;
         post?: never;
         delete?: never;
@@ -603,9 +619,9 @@ export interface components {
                  *       `total=commission+commissionVAT`.
                  *
                  *     All zero on pre-pickup cancels (no service rendered);
-                 *     `vat.amount` zero on driver-cancel-post-pickup (punitive
-                 *     recovery, not a taxable supply). Zero VAT in tax-off
-                 *     jurisdictions.
+                 *     `vat.amount` zero on `driver_abandoned_post_pickup`
+                 *     (punitive recovery, not a taxable supply). Zero VAT in
+                 *     tax-off jurisdictions.
                  */
                 platformInvoice: {
                     /**
@@ -1655,96 +1671,176 @@ export interface components {
             };
         };
         /**
-         * @description The type names the payment family of the underlying order leg, NOT
-         *     the money direction. Direction always lives in `amount.direction`:
-         *     `debit` increases what you owe Altaer, `credit` decreases it.
+         * @description Structured `<scope>.<outcome>.<direction>` name naming what happened
+         *     and between which two accounts. Direction of money in your books
+         *     still lives on `amount.direction` (`debit` increases what you owe
+         *     the platform, `credit` decreases it) — the `_to_` in the type name
+         *     is the obligation direction of the underlying leg, not your view.
          *
-         *     - `cash_due`     — leg of a cash (COD) order dispatched over the
-         *       Altaer network. On a completed order it's a `credit`: the driver
-         *       collected the full COD, so Altaer owes your workspace the
-         *       merchant slice. It flips to `debit` when you owe for a dispatch
-         *       that ran without a normal handoff (you canceled after pickup, or
-         *       a cash door-refusal left a shortfall).
-         *     - `card_payable` — leg of a card-prepaid order dispatched over the
-         *       Altaer network. Always a `debit`: you hold the prepaid revenue,
-         *       so you owe Altaer the delivery invoice (completed, canceled
-         *       after pickup, or refused alike).
-         *     - `punitive`     — driver-cancel-after-pickup rows. Recovery leg
-         *       that makes your workspace whole for the merchant slice the
-         *       driver walked off with; sign is `credit` (you're being refunded,
-         *       not paying for service).
-         *     - `settlement`   — a real-world money movement clearing your balance.
-         *     - `adjustment`   — admin correction.
+         *     Segments:
          *
-         *     The three types below appear ONLY for hub-internal own-fleet workspaces
-         *     (workspaces served by their own operator's fleet) and match the
-         *     `workspace.*` webhook events the same workspaces already receive. External
-         *     tenants using trusted-network fleets never see these — the writer applies
-         *     symmetric obscurity so the underlying rows aren't attributed to the workspace.
+         *     - **scope**
+         *       - `own_fleet` — your workspace is running its own operator's fleet
+         *         (direct routing, no platform intermediary).
+         *       - `network_user` — your workspace is a tenant using the Altaer
+         *         network for delivery. **This is the scope external tenants
+         *         almost always see.**
+         *       - `network_operator` — a trusted operator serving orders on the
+         *         Altaer network (partners-side view). External tenants do NOT
+         *         see these; the writer applies symmetric obscurity so the
+         *         operator side of a network order is never attributed to the
+         *         ordering workspace.
+         *     - **outcome**
+         *       - `completed` — driver dropped off; service rendered.
+         *       - `workspace_canceled_post_dispatch` — you canceled after a
+         *         driver was already dispatched (delivery invoice owed anyway).
+         *       - `driver_abandoned_post_pickup` — driver walked off after
+         *         pickup; punitive recovery makes your merchant slice whole.
+         *       - `customer_refused` — door refusal on a returnable order; the
+         *         original closes as service-rendered and a linked return order
+         *         runs on the same driver.
+         *     - **direction**
+         *       - `<fromParty>_to_<toParty>` — obligation-reversal direction
+         *         of that leg (e.g. `operator_to_workspace` = operator owes
+         *         workspace). Parties: `workspace`, `operator`, `driver`,
+         *         `platform`.
+         *       - `platform_commission` — always operator → platform; the
+         *         operator-owed commission slice on any outcome.
          *
-         *     - `operator_workspace`   — accrual between your workspace and its
-         *       fulfilling operator on own-fleet direct-routing. Cash COD → operator
-         *       owes you the merchant slice (`credit`); card prepay → you owe the
-         *       operator the delivery fee (`debit`).
-         *     - `fleet_commission`    — commission your fleet paid Altaer per order,
-         *       sign relative to the operator (money out). Mirrors the
-         *       `workspace.altaer_fleet_commission.*` webhook.
-         *     - `fleet_driver_payment` — cash-COD/payout leg between your operator
-         *       and one of their fleet drivers. Mirrors the
-         *       `workspace.fleet_driver_balance.settled` webhook.
+         *     Universal (no scope / outcome — they clear or correct the ledger):
+         *
+         *     - `settlement`          — real-world money movement clearing your
+         *       balance.
+         *     - `settlement_reversal` — undoes a failed payout; carries
+         *       `reversalOf` pointing at the original settlement.
+         *     - `adjustment`          — manual admin correction.
+         *
+         *     External-tenant surface: you'll see `network_user.*` on your
+         *     network-dispatched orders, plus `settlement`,
+         *     `settlement_reversal`, and `adjustment`. `own_fleet.*` and
+         *     `network_operator.*` types only surface for hub-internal
+         *     own-fleet workspaces (workspaces served by their own operator's
+         *     fleet) and match the `workspace.*` webhook events the same
+         *     workspaces already receive.
          * @enum {string}
          */
-        LedgerEntryType: "cash_due" | "card_payable" | "punitive" | "settlement" | "adjustment" | "operator_workspace" | "fleet_commission" | "fleet_driver_payment";
+        LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_dispatch.workspace_to_operator" | "own_fleet.workspace_canceled_post_dispatch.operator_to_driver" | "own_fleet.workspace_canceled_post_dispatch.platform_commission" | "network_user.workspace_canceled_post_dispatch.workspace_to_platform" | "network_operator.workspace_canceled_post_dispatch.platform_to_operator" | "network_operator.workspace_canceled_post_dispatch.operator_to_driver" | "network_operator.workspace_canceled_post_dispatch.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
         /**
          * @description `collected_from` = the platform took cash from you (you owed).
          *     `paid_to`        = the platform paid cash to you (we owed).
          * @enum {string}
          */
         SettlementDirection: "collected_from" | "paid_to";
-        BalanceResponse: {
+        /**
+         * @description Card A — your workspace's position vs Altaer. Currency is at the
+         *     envelope root (`BalanceResponse.currency`). Widens `.net` with
+         *     magnitude breakdowns for reconciliation.
+         */
+        WorkspaceAltaerPosition: {
             /**
-             * @description Signed minor units of your workspace currency. Positive =
-             *     you owe the platform; negative = it owes you.
+             * @description Signed. + you owe Altaer, − Altaer owes you. Equals
+             *     `deliveryOwedToAltaer − merchantHeldByAltaer`.
              */
-            balance: number;
+            net: number;
+            /**
+             * @description Magnitude (≥ 0) Altaer is holding for you pending payout —
+             *     cash-collected orders where Altaer holds your merchant slice.
+             */
+            merchantHeldByAltaer: number;
+            /**
+             * @description Magnitude (≥ 0) you owe Altaer for delivery service invoices
+             *     (card-prepaid delivery fee + VAT).
+             */
+            deliveryOwedToAltaer: number;
+            /** @description Distinct orders contributing to the two magnitudes above. */
+            unsettledOrdersCount: number;
         };
         /**
-         * @description Lifetime totals of every ledger row, split by entry type. Minor
-         *     units of `currency` (single-currency by contract). Altaer's
-         *     internal splits (commission, driver earning) are not exposed.
+         * @description Card B — commission balance your operator owes Altaer on THIS
+         *     workspace's orders only (workspace-scoped). Not the operator's
+         *     aggregate across every workspace they serve.
+         *
+         *     How settlements offset correctly: commission accrual legs are stamped
+         *     with the ordering `workspaceId`; the settle writer also stamps
+         *     `workspaceId` on each per-workspace settle slice (one ledger row per
+         *     contributing workspace). Filtering both by `workspaceId` gives
+         *     `accruals − attributed settlements = net owed for this workspace`.
+         *
+         *     For most own-fleet operators (one workspace per operator), workspace-
+         *     scoped and operator-aggregate numbers are identical. For multi-
+         *     workspace operators, each workspace sees only its own slice.
+         *
+         *     Present only when the tenant operates a fleet.
+         */
+        OperatorAltaerPosition: {
+            /**
+             * @description Signed. + operator owes Altaer for this workspace's orders,
+             *     − Altaer owes operator (adjustment credit — rare).
+             */
+            net: number;
+        };
+        /**
+         * @description Card C — off-platform position between this workspace and its
+         *     operator (own-fleet direct-routing bookkeeping, no PSP settlement).
+         *     A workspace has exactly one operator, so this is a single number —
+         *     no per-workspace array. Present only when the tenant operates a
+         *     fleet. Currency at envelope root.
+         */
+        OperatorWorkspacePosition: {
+            /**
+             * @description Signed. + workspace owes operator (fleet card prepay pending),
+             *     − operator owes workspace (fleet cash COD goods value pending).
+             */
+            net: number;
+        };
+        /**
+         * @description Three workspace-scoped balance slices in one envelope, each
+         *     nullable so the body shape stays stable across every tenant
+         *     scenario. Currency lives at the root — a workspace is single-
+         *     currency by design, so every slice below shares this one currency.
+         *     Use presence (non-null) to decide visibility (no separate
+         *     "operatesFleet" flag needed).
+         *
+         *     Sign on every `.net` field: **positive = YOU owe them, negative =
+         *     they owe YOU** — same rule across all three slices.
+         */
+        BalanceResponse: {
+            currency: components["schemas"]["Currency"];
+            workspaceAltaer: components["schemas"]["WorkspaceAltaerPosition"] | null;
+            operatorAltaer: components["schemas"]["OperatorAltaerPosition"] | null;
+            operatorWorkspace: components["schemas"]["OperatorWorkspacePosition"] | null;
+            /**
+             * Format: date-time
+             * @description Server clock stamped when the envelope was composed. Socket
+             *     handlers use it to drop a hydration GET that landed after a
+             *     fresher `balanceUpdated` push.
+             */
+            asOf: string;
+        };
+        /**
+         * @description Lifetime totals of every ledger row, split by the two workspace-side
+         *     accruals plus settlements + adjustments. Minor units of `currency`
+         *     (single-currency by contract). Altaer's internal splits (commission,
+         *     driver earning) are not exposed. Only surfaced inside `/finance/statement`
+         *     — the standalone summary endpoint was removed in favor of the
+         *     richer `BalanceResponse`.
          */
         FinanceSummary: {
             currency: components["schemas"]["Currency"];
             /** @description Sum of `amount` over all entries. Equals your current balance. */
             net: number;
-            /** @description Signed Σ over `cash_due` rows. Usually negative (COD merchant slices Altaer owes you); positive when cancel/refusal debits dominate. */
-            cashDue: number;
-            /** @description Signed Σ over `card_payable` rows. Positive — delivery invoices you owe on prepaid orders. */
-            cardPayable: number;
+            /** @description Signed Σ of the merchant slices Altaer is holding for you pending settle — always ≥ 0 (a credit in your favor). Positive when Altaer owes you COD it collected; back to 0 after payout. */
+            merchantHeldByAltaer: number;
+            /** @description Signed Σ of the delivery-service invoices (delivery fee + VAT) you owe Altaer — always ≤ 0 (a debit against you). Back to 0 after settle. */
+            deliveryOwedToAltaer: number;
             /** @description Σ over `settlement` rows. */
             settlements: number;
             /** @description Σ over `adjustment` rows (admin corrections). */
             adjustments: number;
-            /** @description Count of `cash_due` + `card_payable` rows (one per order leg). */
-            owedOrdersCount: number;
-            /** @description Σ delivery fees Altaer charged you across owed orders. */
+            /** @description Count of orders with a non-zero `merchantHeldByAltaer` or `deliveryOwedToAltaer` accrual still open (i.e. not yet settled). */
+            unsettledOrdersCount: number;
+            /** @description Σ delivery fees Altaer charged you across unsettled orders. */
             grossDeliveryFee: number;
-        };
-        /**
-         * @description Dashboard rollup for reconciliation. Minor units; `net` is
-         *     signed (positive = you owe the platform).
-         */
-        FinanceOverview: {
-            /** @description Current balance (signed). */
-            net: number;
-            completedOrdersCount: number;
-            settlementsCount: number;
-            /** @description Σ order.merchantAmount over completed orders — your revenue. */
-            lifetimeSales: number;
-            /** @description Σ (deliveryFee + platformFeeVat) — total owed to Altaer per delivery, VAT included. */
-            lifetimeAltaerInvoice: number;
-            /** @description Σ platformFeeVat — reclaimable input VAT slice inside lifetimeAltaerInvoice. */
-            lifetimeAltaerVat: number;
         };
         /**
          * @description One ledger row (minor units of `currency`). `amount` is a grouped
@@ -1852,14 +1948,13 @@ export interface components {
             origin: "api" | "hub";
             /**
              * @description The ledger family behind the item — the same vocabulary
-             *     `/finance/ledger` rows speak (the order-leg subset of
-             *     `LedgerEntryType`), so items join against ledger rows without
-             *     translation. `operator_workspace` appears only on own-fleet
-             *     orders (the operator↔workspace goods/fee leg); settle rows
-             *     themselves are never items.
-             * @enum {string}
+             *     `/finance/ledger` rows speak, so items join against ledger
+             *     rows without translation. Only order-leg types appear here
+             *     (`network_user.*` for external tenants, plus `own_fleet.*` /
+             *     `network_operator.*` for hub-internal own-fleet workspaces);
+             *     settle rows themselves are never items.
              */
-            type: "cash_due" | "card_payable" | "punitive" | "operator_workspace";
+            type: components["schemas"]["LedgerEntryType"];
             /**
              * @description Signed minor units (positive = you owed the platform).
              *     Per-origin item sums match `breakdown.<origin>`.
@@ -1879,11 +1974,38 @@ export interface components {
             settlement: components["schemas"]["Settlement"];
             items: components["schemas"]["SettlementItem"][];
         };
+        /**
+         * @description One order in the paginated ledger stream, carrying the ledger
+         *     legs the workspace has visibility on for that order. Entries are
+         *     ordered oldest-first so the writer's leg sequence reads
+         *     top-to-bottom.
+         */
+        LedgerOrderGroup: {
+            /** Format: altaer-id */
+            orderId: string;
+            /** @description Your own external id snapshot; null if you didn't set one at create time. */
+            externalOrderId: string | null;
+            /**
+             * Format: date-time
+             * @description Order.createdAt — the anchor used for group sort/pagination.
+             */
+            createdAt: string;
+            entries: components["schemas"]["LedgerEntry"][];
+        };
+        /**
+         * @description Order-grouped page. `limit`/`offset` count **orders** — one item
+         *     per order in the window — not individual entries. Same-order
+         *     legs are always returned together. For the total order count in
+         *     the window, call the sibling `/finance/ledger/count`.
+         */
         LedgerListResponse: {
-            items: components["schemas"]["LedgerEntry"][];
-            total: number;
+            items: components["schemas"]["LedgerOrderGroup"][];
             limit: number;
             offset: number;
+        };
+        LedgerCountResponse: {
+            /** @description Total number of orders in the window (independent of `limit`/`offset`). */
+            total: number;
         };
         SettlementListResponse: {
             items: components["schemas"]["Settlement"][];
@@ -2022,6 +2144,13 @@ export interface components {
                 /**
                  * @description Machine-readable code for programmatic branching (e.g.
                  *     `order/not_found`). Prefer this over parsing `message`.
+                 *     Codes are grouped by domain prefix — `order/*`, `finance/*`,
+                 *     `validation/*`, `auth/*`, `driver/*`, etc. The `system/*`
+                 *     family covers infrastructure conditions surfaced from the
+                 *     platform itself: `system/internal_error` (opaque 5xx),
+                 *     `system/upstream_unavailable` (dependent service down),
+                 *     and `system/duplicate_resource` (409 on a unique-constraint
+                 *     violation — the `message` names the conflicting field).
                  */
                 code: string;
                 /** @description Human-readable description. */
@@ -2431,7 +2560,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current balance. */
+            /** @description Current balances. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2443,60 +2572,15 @@ export interface operations {
             401: components["responses"]["AuthError"];
         };
     };
-    getFinanceSummary: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Lifetime summary. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceSummary"];
-                };
-            };
-            401: components["responses"]["AuthError"];
-        };
-    };
-    getFinanceOverview: {
-        parameters: {
-            query?: {
-                /** @description ISO date `YYYY-MM-DD`. Filters to entries on or after this date. */
-                since?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Overview rollup. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceOverview"];
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            401: components["responses"]["AuthError"];
-        };
-    };
     listLedger: {
         parameters: {
             query?: {
+                /** @description Max **orders** per page (each order carries its own legs). */
                 limit?: number;
                 offset?: number;
-                /** @description Inclusive lower bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                /** @description Inclusive lower bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
                 since?: string;
-                /** @description Inclusive upper bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                /** @description Inclusive upper bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
                 until?: string;
             };
             header?: never;
@@ -2505,13 +2589,39 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Paginated ledger. */
+            /** @description Paginated ledger (per-order groups). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["LedgerListResponse"];
+                };
+            };
+            401: components["responses"]["AuthError"];
+        };
+    };
+    countLedger: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                since?: string;
+                /** @description Inclusive upper bound on Order `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Total orders in the window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerCountResponse"];
                 };
             };
             401: components["responses"]["AuthError"];

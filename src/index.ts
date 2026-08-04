@@ -31,6 +31,7 @@ export {
   SignatureVerificationError,
   ValidationError,
 } from './errors';
+export type { SystemErrorCode } from './errors';
 
 // Public types — every DTO a caller will ever need to annotate against.
 export type {
@@ -50,8 +51,7 @@ export type {
   DriverKycStatusChangedPayload,
   DriverLocation,
   DriverSnapshot,
-  FinanceOverview,
-  FinanceOverviewInput,
+  FinanceLedgerCountInput,
   FinancePaginationInput,
   FinanceSummary,
   FleetCreatedPayload,
@@ -65,9 +65,13 @@ export type {
   FleetTrustGrantedPayload,
   FleetTrustRevokedPayload,
   Fulfillment,
+  LedgerCountResponse,
   LedgerEntry,
   LedgerEntryType,
   LedgerListResponse,
+  LedgerOrderGroup,
+  OperatorAltaerPosition,
+  OperatorWorkspacePosition,
   ListOrdersInput,
   OperatingHours,
   Order,
@@ -103,6 +107,7 @@ export type {
   WebhookEnvelope,
   WebhookEvent,
   WebhookEventType,
+  WorkspaceAltaerPosition,
   WorkspaceIndustry,
   WorkspaceProfile,
 } from './types';

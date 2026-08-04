@@ -1,6 +1,16 @@
 // Typed error hierarchy — callers branch on `instanceof` instead of parsing strings.
 // Every non-2xx response maps to a discriminated subclass of AltaerError.
 
+/** Codes in the `system/*` family — infrastructure conditions surfaced from
+ *  the platform itself, distinct from domain codes like `order/*`. Callers
+ *  branch on `err.code` for programmatic handling; other strings still pass
+ *  through, so treat this as a well-known subset rather than an exhaustive
+ *  union. */
+export type SystemErrorCode =
+  | 'system/internal_error'
+  | 'system/upstream_unavailable'
+  | 'system/duplicate_resource';
+
 /** Base for every error this SDK raises on a non-2xx response. */
 export class AltaerError extends Error {
   /** HTTP status code. Set to 0 for network errors that never got a

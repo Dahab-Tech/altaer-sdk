@@ -1,10 +1,9 @@
 import type { HttpClient, RequestOptions } from '../http';
 import type {
   BalanceResponse,
-  FinanceOverview,
-  FinanceOverviewInput,
+  FinanceLedgerCountInput,
   FinancePaginationInput,
-  FinanceSummary,
+  LedgerCountResponse,
   LedgerListResponse,
   SettlementListResponse,
   SettlementWithItems,
@@ -18,40 +17,39 @@ import type {
 export class FinanceResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Current signed balance with the platform. Positive = you owe;
-   *  negative = the platform owes you. Integer minor units of the
-   *  workspace currency. */
+  /** Three balance slices in one call — see `BalanceResponse` for the
+   *  nullable envelope. Non-null presence tells you which slices apply
+   *  to this tenant (pure network users only see `workspaceAltaer`;
+   *  own-fleet operators see all three). */
   async balance(opts?: RequestOptions): Promise<BalanceResponse> {
     return this.http.get<BalanceResponse>('/api/v1/workspaces/me/finance/balance', opts);
   }
 
-  /** Lifetime aggregate of every ledger row tied to your workspace,
-   *  split by entry type. Single-currency by contract (your workspace
-   *  currency is immutable post-create). */
-  async summary(opts?: RequestOptions): Promise<FinanceSummary> {
-    return this.http.get<FinanceSummary>('/api/v1/workspaces/me/finance/summary', opts);
-  }
-
-  /** Tenant-perspective rollup for dashboards. Pass `since` to scope to
-   *  a window (e.g. start of month) for a clean monthly view. All money
-   *  fields are integer minor units of the workspace currency. */
-  async overview(input?: FinanceOverviewInput, opts?: RequestOptions): Promise<FinanceOverview> {
-    const params = new URLSearchParams();
-    if (input?.since) params.set('since', input.since);
-    const qs = params.toString();
-    return this.http.get<FinanceOverview>(
-      `/api/v1/workspaces/me/finance/overview${qs ? `?${qs}` : ''}`,
+  /** Paginated ledger grouped per order — one item per order in the
+   *  window (newest first), carrying that order's ledger legs. Pages
+   *  never split same-order legs. Settlements + adjustments don't
+   *  appear here (use `settlements(...)` instead). Call `ledgerCount`
+   *  for the total order count in the same window. */
+  async ledger(input?: FinancePaginationInput, opts?: RequestOptions): Promise<LedgerListResponse> {
+    return this.http.get<LedgerListResponse>(
+      `/api/v1/workspaces/me/finance/ledger${paginationQs(input)}`,
       opts
     );
   }
 
-  /** Paginated ledger history, newest first. Each row carries a grouped
-   *  `amount: { value, direction }`. `value` is always ≥ 0; `direction`
-   *  is `debit` (workspace owes more) or `credit` (workspace owes less,
-   *  or platform owes workspace). */
-  async ledger(input?: FinancePaginationInput, opts?: RequestOptions): Promise<LedgerListResponse> {
-    return this.http.get<LedgerListResponse>(
-      `/api/v1/workspaces/me/finance/ledger${paginationQs(input)}`,
+  /** Total number of orders in the same window `ledger(...)` slices.
+   *  Cache per window — refetch only on window (`since`/`until`) change,
+   *  not on every page flip. */
+  async ledgerCount(
+    input?: FinanceLedgerCountInput,
+    opts?: RequestOptions
+  ): Promise<LedgerCountResponse> {
+    const params = new URLSearchParams();
+    if (input?.since) params.set('since', input.since);
+    if (input?.until) params.set('until', input.until);
+    const qs = params.toString();
+    return this.http.get<LedgerCountResponse>(
+      `/api/v1/workspaces/me/finance/ledger/count${qs ? `?${qs}` : ''}`,
       opts
     );
   }

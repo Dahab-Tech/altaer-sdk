@@ -2,6 +2,120 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.43] — 2026-08-04
+
+Balance envelope correctness + performance. Response shape is unchanged from 0.0.42 — this release fixes two behavioral bugs in the balance math and dramatically speeds up the endpoint. Consumers that were seeing surprising Card A `net` numbers or an inflated Card B `operatorAltaer.net` should see corrected values without any code change.
+
+### Fixed
+
+- **`workspaceAltaer.net` sign math**: 0.0.42 computed net by subtracting SIGNED sums (`deliveryOwedToAltaer − merchantHeldByAltaer`) but the two fields were themselves signed (the "held" side is a credit / negative), so `net` came out inflated (subtracting a negative). Now composed from magnitudes: `|delivery| − |held|`. Example: workspace with $100 held by Altaer + $30 owed to Altaer → 0.0.42 returned `net: 130`, now returns `net: -70` (Altaer owes you $70). Matches the sign convention docs promised.
+- **`workspaceAltaer.merchantHeldByAltaer` + `deliveryOwedToAltaer`**: now truly magnitudes (≥ 0) as documented. 0.0.42 returned signed sums, so `merchantHeldByAltaer` came out negative — inconsistent with the "magnitude Altaer is holding" description.
+- **`workspaceAltaer` for own-fleet-only tenants**: was pulling in own-fleet operator↔workspace legs (which belong on Card C), producing enormous inflated numbers. Now scoped strictly to `network_user.*` platform-touching legs.
+- **`operatorAltaer.net` semantics**: now WORKSPACE-SCOPED (this workspace's commission slice only) instead of operator-aggregate. Works correctly because the settle writer already stamps `workspaceId` on each per-workspace settle slice — filtering by `workspaceId` gives you `accruals − attributed settlements`. For single-workspace operators this is identical to operator-total; for multi-workspace operators, each workspace sees only its own slice.
+- **`/finance/ledger` order groups no longer include foreign legs on trusted-network orders**: previously the per-order `entries` array returned all 4 legs (workspace↔platform + operator↔platform internal clearing) because they all share the same `workspaceId` snapshot. Now filtered by workspace-touching (`fromAccount` OR `toAccount` = your workspace's account), so you see only the leg you're a party to. Trusted-network tenants: 1 leg per order instead of 4.
+
+### Performance
+
+- **`/finance/balance`** typical latency dropped ~50% (measured on production workloads: 800ms → 400ms). Added a compound `(workspaceId, type)` index on ledger entries and rewrote the three composer readers to be type-anchored — Mongo now jumps directly to the relevant type-subset instead of scanning every workspace row. Trusted-user tenants with no commission activity see near-instant returns for Card B/C (zero matching rows via index probe).
+
+### No shape changes
+
+- All fields, types, methods, and response schemas are unchanged from 0.0.42.
+- SDK regeneration produces the identical TypeScript type shape — the only diff in `sdk/src/generated/api.ts` is refreshed schema description comments (updated `operatorAltaer` narrative). No `.d.ts` shape change; existing type-only consumers see no compile impact.
+- Consumers already integrated with 0.0.42's shape need no code changes to pick up the fixes.
+
+## [0.0.42] — 2026-08-04
+
+Tenant finance API reshape. Two independent changes that ship together:
+
+1. **`/balance`** now returns a **workspace-scoped, single-currency, three-slice envelope**. Currency lives at the envelope root; every slice below shares it. Slice values are workspace-scoped — never operator-aggregated across all workspaces the operator serves.
+2. **`/ledger`** now paginates per order (one item per order, each carrying its ledger legs) instead of per entry.
+
+### Breaking
+
+- **`client.finance.summary()` removed.** The lifetime summary shape is still available inside `Statement.summary` from `client.finance.statement(...)`.
+- **`client.finance.overview()` removed.** The dashboard-oriented KPI rollup wasn't in the tenant contract's spirit; reconciliation numbers live on the new `BalanceResponse` envelope and per-window totals live on `Statement`.
+- **`FinanceOverview` + `FinanceOverviewInput` type exports removed.**
+- **`BalanceResponse` shape changed.** Was `{ balance: number }`; is now the envelope:
+  ```ts
+  {
+    currency: 'EGP' | 'USD' | 'EUR' | 'GBP';    // root — single-currency by design
+    workspaceAltaer: { net, merchantHeldByAltaer, deliveryOwedToAltaer, unsettledOrdersCount } | null;
+    operatorAltaer: { net } | null;              // operator's commission balance vs Altaer, in this workspace's currency
+    operatorWorkspace: { net } | null;           // singular — workspace vs its operator, off-platform
+    asOf: string;                                // ISO stamp for socket race resolution
+  }
+  ```
+  Sign convention on every `.net`: **positive = YOU owe them, negative = they owe YOU** — same across all three slices. Each slice is nullable so the body shape stays stable — non-null presence tells you which cards apply. `operatorAltaer` / `operatorWorkspace` are non-null only when you operate a fleet.
+- **`LedgerListResponse` shape changed.** Was `{ items: LedgerEntry[], total, limit, offset }`; is now `{ items: LedgerOrderGroup[], limit, offset }` where each group is `{ orderId, externalOrderId, createdAt, entries: LedgerEntry[] }`. **Pagination unit is now orders, not entries** — pages never split same-order legs. Settlements + adjustments no longer appear in this stream; use `client.finance.settlements(...)` for them.
+- **`total` removed from the ledger items response.** Fetch it from the new sibling endpoint (see below).
+
+### Added
+
+- **`client.finance.ledgerCount(input?)` → `{ total }`** — total-order-count sibling for the ledger paginator. Cache per window (`since`/`until`) and refetch only when the window changes, not on every page flip.
+- **New types**: `WorkspaceAltaerPosition`, `OperatorAltaerPosition`, `OperatorWorkspacePosition`, `LedgerOrderGroup`, `LedgerCountResponse`, `FinanceLedgerCountInput`.
+
+### Fixed
+
+- **`workspaceAltaer.net` no longer double-counts own-fleet operator↔workspace legs** into the Altaer position. Pre-refactor the field summed every workspace-touching ledger leg (including own-fleet direct-routing legs that belong on the operator slice); now it's composed from `deliveryOwedToAltaer − merchantHeldByAltaer` (Altaer-touching legs only). Own-fleet-only tenants with no Altaer exposure correctly get `workspaceAltaer: null`.
+- **`/balance` latency**: pre-refactor the two operator slices ran unbounded operator-wide aggregations. Now every read is workspace-scoped (indexed on `workspaceId`), typically <100ms.
+
+### Migration
+
+```ts
+// Balance
+- const { balance } = await al.finance.balance();
+- if (balance > 0) console.log('you owe', balance);
++ const b = await al.finance.balance();
++ console.log('currency:', b.currency);
++ if (b.workspaceAltaer && b.workspaceAltaer.net > 0) {
++   console.log('you owe Altaer:', b.workspaceAltaer.net);
++ }
++ if (b.operatorAltaer) console.log('commission owed:', b.operatorAltaer.net);
++ if (b.operatorWorkspace) console.log('vs operator:', b.operatorWorkspace.net);
+
+// Ledger — group iteration
+- const page = await al.finance.ledger({ limit: 50 });
+- for (const row of page.items) console.log(row.type, row.amount);
++ const page = await al.finance.ledger({ limit: 20 });
++ for (const group of page.items) {
++   for (const row of group.entries) console.log(row.type, row.amount);
++ }
++ const { total } = await al.finance.ledgerCount(); // was page.total
+
+// Summary — now embedded in Statement
+- const s = await al.finance.summary();
++ const { summary } = await al.finance.statement();
+```
+
+## [0.0.41] — 2026-08-02
+
+Ledger-type vocabulary overhaul. Every entry type is now a self-describing three-segment name `<scope>.<outcome>.<direction>` (e.g. `own_fleet.completed.operator_to_workspace`, `network_user.workspace_canceled_post_dispatch.workspace_to_platform`). The old flat vocabulary (`cash_due`, `card_payable`, `punitive`, `operator_workspace`, `fleet_commission`, `fleet_driver_payment`) is gone.
+
+### Breaking
+
+- **`LedgerEntryType` enum rewritten** — 36 new names, no overlap with the old vocabulary. Exhaustive `switch` statements need to be regenerated. Scopes: `own_fleet` (own-operator direct), `network_operator` (trusted-fleet operator serving the network), `network_user` (workspace using the Altaer network — the scope external tenants almost always see). Outcomes: `completed`, `workspace_canceled_post_dispatch`, `driver_abandoned_post_pickup`, `customer_refused`. Direction: `<fromParty>_to_<toParty>` or `platform_commission` (always operator → platform). Universals: `settlement`, `settlement_reversal`, `adjustment`.
+- **`settlement_reversal` split out from `settlement`.** Failed-payout undo rows carry their own type + `reversalOf` snapshot instead of appearing as another `settlement` with an obligation-reversal sign. Consumers reconciling settle history need to fold both into their "settlement" bucket.
+- **`FinanceSummary` field renames** (still available inside `Statement.summary`):
+  - `cashDue` → `merchantHeldByAltaer`
+  - `cardPayable` → `deliveryOwedToAltaer`
+  - `owedOrdersCount` → `unsettledOrdersCount`
+
+### Migration
+
+```ts
+- if (row.type === 'cash_due') ...
+- if (row.type === 'card_payable') ...
+- if (row.type === 'operator_workspace') ...
++ // Filter by suffix segment for the common cases:
++ if (row.type.endsWith('.platform_commission')) ...     // commission legs
++ if (row.type.endsWith('.workspace_to_platform')) ...   // you owe Altaer
++ if (row.type.endsWith('.platform_to_workspace')) ...   // Altaer owes you
++ // Or match a full scope+outcome+direction name from the enum.
+```
+
+Full type list + writing spec: `docs/ledger-scenarios.md` in the repo.
+
 ## [0.0.40] — 2026-07-31
 
 Ledger-vocabulary unification: every finance surface now speaks the same flat entry types, and the type docs state the correct money direction.
