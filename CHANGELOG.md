@@ -2,6 +2,12 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.46] - 2026-08-05
+
+New shapes
+
+### Breaking
+
 ## [0.0.45] — 2026-08-05
 
 `/finance/settlements` now matches the items/count split already in place for `/finance/ledger`, and per-order P&L is exposed to tenants for the first time (previously hub-only).

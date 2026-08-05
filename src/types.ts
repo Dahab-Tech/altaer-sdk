@@ -150,11 +150,13 @@ export type OrderFinancials = Schemas['OrderFinancials'];
  *  visibility. */
 export type BalanceResponse = Schemas['BalanceResponse'];
 /** One slice of `BalanceResponse.workspaceAltaer`. */
-export type WorkspaceAltaerPosition = Schemas['WorkspaceAltaerPosition'];
+export type WorkspaceAltaerPosition = NonNullable<Schemas['BalanceResponse']['workspaceAltaer']>;
 /** One slice of `BalanceResponse.operatorAltaer`. */
-export type OperatorAltaerPosition = Schemas['OperatorAltaerPosition'];
+export type OperatorAltaerPosition = NonNullable<Schemas['BalanceResponse']['operatorAltaer']>;
 /** One slice of `BalanceResponse.operatorWorkspace` (singular — workspace vs its operator). */
-export type OperatorWorkspacePosition = Schemas['OperatorWorkspacePosition'];
+export type OperatorWorkspacePosition = NonNullable<
+  Schemas['BalanceResponse']['operatorWorkspace']
+>;
 /** Surfaced inside `Statement.summary` — the standalone
  *  `/finance/summary` endpoint has been removed. */
 export type FinanceSummary = Schemas['FinanceSummary'];
@@ -169,7 +171,7 @@ export type LedgerOrderGroup = Schemas['LedgerOrderGroup'];
 export type LedgerOrderGroupEconomics = Schemas['LedgerOrderGroupEconomics'];
 /** Cancel context on `LedgerOrderGroup.cancellation`. Non-null when the
  *  order was canceled (any scenario); null on completed orders. */
-export type LedgerOrderGroupCancellation = Schemas['LedgerOrderGroupCancellation'];
+export type LedgerOrderGroupCancellation = NonNullable<Schemas['LedgerOrderGroup']['cancellation']>;
 export type LedgerListResponse = Schemas['LedgerListResponse'];
 /** Sibling count for the ledger paginator. Cache per window. */
 export type LedgerCountResponse = Schemas['LedgerCountResponse'];

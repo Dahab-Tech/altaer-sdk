@@ -984,9 +984,9 @@ export interface components {
                 id: string;
                 name: string;
                 phoneNumber: string;
-                /** @description Profile photo URL + cache-bust nonce. */
+                /** @description Profile photo URL + cache-bust nonce. Both fields null when the driver has no photo uploaded. */
                 image: {
-                    url: string;
+                    url: string | null;
                     version: string | null;
                 };
                 /** @description Blended 0..5 rating. `average` null when `count` is 0. */
@@ -1008,20 +1008,19 @@ export interface components {
             /**
              * @description Who fulfilled the delivery — discriminate on `kind`. Null
              *     while unassigned. `platform` = the Altaer network (open
-             *     dispatch or trusted-fleet — symmetric obscurity).
+             *     dispatch or trusted-fleet — symmetric obscurity). On
+             *     `kind: fleet`, `fleetId` / `fleetName` / `ownerOperatorId`
+             *     are populated; on `kind: platform` they are absent.
              */
-            fulfillment: ({
+            fulfillment: {
                 /** @enum {string} */
-                kind: "platform";
-            } | {
-                /** @enum {string} */
-                kind: "fleet";
+                kind: "platform" | "fleet";
                 /** Format: altaer-id */
-                fleetId: string;
-                fleetName: string;
+                fleetId?: string;
+                fleetName?: string;
                 /** Format: altaer-id */
-                ownerOperatorId: string;
-            }) | null;
+                ownerOperatorId?: string;
+            } | null;
             /** @description Cancellation context. Null unless `status === "canceled"`. */
             cancellation: {
                 by: components["schemas"]["CanceledBy"];
@@ -1339,19 +1338,6 @@ export interface components {
             data: components["schemas"]["AltaerFleetCommissionSettledPayload"];
         };
         /**
-         * @description Rail block for commission events — method is a fixed enum
-         *     (`cash` reserved for a future manual path; `psp` today).
-         */
-        CommissionProviderWire: {
-            /**
-             * @description `psp` = "Settle now" via saved card; `cash` reserved for a
-             *     future manual path.
-             * @enum {string}
-             */
-            method: "cash" | "psp";
-            ref: string | null;
-        };
-        /**
          * @description Fan-out signed balance snapshot — commission fan-outs always
          *     settle a workspace's full slice, so balanceAfter is 0.
          */
@@ -1383,7 +1369,7 @@ export interface components {
              * @enum {string}
              */
             direction: "paid_to" | "collected_from";
-            provider: components["schemas"]["CommissionProviderWire"];
+            provider: components["schemas"]["SettlementProviderWire"];
             note?: string | null;
             /** @description Your slice of the operator's total settle (minor units). */
             amount: number;
@@ -1816,68 +1802,6 @@ export interface components {
          */
         SettlementDirection: "collected_from" | "paid_to";
         /**
-         * @description Card A — your workspace's position vs Altaer. Currency is at the
-         *     envelope root (`BalanceResponse.currency`). Widens `.net` with
-         *     magnitude breakdowns for reconciliation.
-         */
-        WorkspaceAltaerPosition: {
-            /**
-             * @description Signed. + you owe Altaer, − Altaer owes you. Equals
-             *     `deliveryOwedToAltaer − merchantHeldByAltaer`.
-             */
-            net: number;
-            /**
-             * @description Magnitude (≥ 0) Altaer is holding for you pending payout —
-             *     cash-collected orders where Altaer holds your merchant slice.
-             */
-            merchantHeldByAltaer: number;
-            /**
-             * @description Magnitude (≥ 0) you owe Altaer for delivery service invoices
-             *     (card-prepaid delivery fee + VAT).
-             */
-            deliveryOwedToAltaer: number;
-            /** @description Distinct orders contributing to the two magnitudes above. */
-            unsettledOrdersCount: number;
-        };
-        /**
-         * @description Card B — commission balance your operator owes Altaer on THIS
-         *     workspace's orders only (workspace-scoped). Not the operator's
-         *     aggregate across every workspace they serve.
-         *
-         *     How settlements offset correctly: commission accrual legs are stamped
-         *     with the ordering `workspaceId`; the settle writer also stamps
-         *     `workspaceId` on each per-workspace settle slice (one ledger row per
-         *     contributing workspace). Filtering both by `workspaceId` gives
-         *     `accruals − attributed settlements = net owed for this workspace`.
-         *
-         *     For most own-fleet operators (one workspace per operator), workspace-
-         *     scoped and operator-aggregate numbers are identical. For multi-
-         *     workspace operators, each workspace sees only its own slice.
-         *
-         *     Present only when the tenant operates a fleet.
-         */
-        OperatorAltaerPosition: {
-            /**
-             * @description Signed. + operator owes Altaer for this workspace's orders,
-             *     − Altaer owes operator (adjustment credit — rare).
-             */
-            net: number;
-        };
-        /**
-         * @description Card C — off-platform position between this workspace and its
-         *     operator (own-fleet direct-routing bookkeeping, no PSP settlement).
-         *     A workspace has exactly one operator, so this is a single number —
-         *     no per-workspace array. Present only when the tenant operates a
-         *     fleet. Currency at envelope root.
-         */
-        OperatorWorkspacePosition: {
-            /**
-             * @description Signed. + workspace owes operator (fleet card prepay pending),
-             *     − operator owes workspace (fleet cash COD goods value pending).
-             */
-            net: number;
-        };
-        /**
          * @description Three workspace-scoped balance slices in one envelope, each
          *     nullable so the body shape stays stable across every tenant
          *     scenario. Currency lives at the root — a workspace is single-
@@ -1890,9 +1814,56 @@ export interface components {
          */
         BalanceResponse: {
             currency: components["schemas"]["Currency"];
-            workspaceAltaer: components["schemas"]["WorkspaceAltaerPosition"] | null;
-            operatorAltaer: components["schemas"]["OperatorAltaerPosition"] | null;
-            operatorWorkspace: components["schemas"]["OperatorWorkspacePosition"] | null;
+            /**
+             * @description Card A — your workspace's position vs Altaer. Currency is at
+             *     the envelope root. Widens `.net` with magnitude breakdowns
+             *     for reconciliation.
+             */
+            workspaceAltaer: {
+                /**
+                 * @description Signed. + you owe Altaer, − Altaer owes you. Equals
+                 *     `deliveryOwedToAltaer − merchantHeldByAltaer`.
+                 */
+                net: number;
+                /**
+                 * @description Magnitude (≥ 0) Altaer is holding for you pending payout —
+                 *     cash-collected orders where Altaer holds your merchant slice.
+                 */
+                merchantHeldByAltaer: number;
+                /**
+                 * @description Magnitude (≥ 0) you owe Altaer for delivery service invoices
+                 *     (card-prepaid delivery fee + VAT).
+                 */
+                deliveryOwedToAltaer: number;
+                /** @description Distinct orders contributing to the two magnitudes above. */
+                unsettledOrdersCount: number;
+            } | null;
+            /**
+             * @description Card B — commission balance your operator owes Altaer on THIS
+             *     workspace's orders only (workspace-scoped). Not the operator's
+             *     aggregate across every workspace they serve. Present only when
+             *     the tenant operates a fleet.
+             */
+            operatorAltaer: {
+                /**
+                 * @description Signed. + operator owes Altaer for this workspace's orders,
+                 *     − Altaer owes operator (adjustment credit — rare).
+                 */
+                net: number;
+            } | null;
+            /**
+             * @description Card C — off-platform position between this workspace and its
+             *     operator (own-fleet direct-routing bookkeeping, no PSP
+             *     settlement). A workspace has exactly one operator, so this is
+             *     a single number. Present only when the tenant operates a fleet.
+             */
+            operatorWorkspace: {
+                /**
+                 * @description Signed. + workspace owes operator (fleet card prepay pending),
+                 *     − operator owes workspace (fleet cash COD goods value pending).
+                 */
+                net: number;
+            } | null;
             /**
              * Format: date-time
              * @description Server clock stamped when the envelope was composed. Socket
@@ -1974,13 +1945,7 @@ export interface components {
                 /** @description Signed; typically 0 on full settle. */
                 balanceAfter: number;
             };
-            /** @description Rail/channel that moved the money. */
-            provider: {
-                /** @description Payment/payout channel. Values include `manual_cash`, `stripe_checkout`, `paymob_checkout`, `paymob_disburse`, `stripe_transfer`, `paymob_refund`, `paymob_payout_failed`, or a saved-method kind (`card`, `instapay`, `vodafone_cash`, `fawry_pay`, …). Treat as an open string — new PSP integrations add labels. */
-                method: string | null;
-                /** @description PSP reference. Null for manual_cash. */
-                ref: string | null;
-            };
+            provider: components["schemas"]["SettlementProviderWire"];
             note: string | null;
             /** @description Admin-stamped tags echoed verbatim. Use for batch ids, internal ticket ids, etc. */
             metadata: {
@@ -2077,8 +2042,16 @@ export interface components {
             writtenAt: string;
             currency: components["schemas"]["Currency"];
             economics: components["schemas"]["LedgerOrderGroupEconomics"];
-            /** @description Non-null when the order was canceled (any cancel scenario); null on completed orders. */
-            cancellation: components["schemas"]["LedgerOrderGroupCancellation"] | null;
+            /**
+             * @description Cancel context. Present only on canceled orders; null on
+             *     completed.
+             */
+            cancellation: {
+                /** @description Who canceled: `workspace`, `driver`, `dropoff` (customer refused), or `admin`. */
+                canceledBy: string | null;
+                /** @description Order status at cancel time (e.g. `dispatched`, `pickedUp`). */
+                statusBeforeCancel: string;
+            } | null;
             entries: components["schemas"]["LedgerEntry"][];
         };
         /**
@@ -2100,13 +2073,6 @@ export interface components {
             platformCommissionAmount: number | null;
             /** @description Commission rate at owed-time (decimal in [0, 1]). */
             platformCommissionRate: number | null;
-        };
-        /** @description Cancel context. Present only on canceled orders; null on completed. */
-        LedgerOrderGroupCancellation: {
-            /** @description Who canceled: `workspace`, `driver`, `dropoff` (customer refused), or `admin`. */
-            canceledBy: string | null;
-            /** @description Order status at cancel time (e.g. `dispatched`, `pickedUp`). */
-            statusBeforeCancel: string;
         };
         /**
          * @description Order-grouped page. `limit`/`offset` count **orders** — one item
@@ -2747,6 +2713,27 @@ export interface operations {
              *     protocol above, not HTTP.
              */
             101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /**
+             * @description Long-polling fallback frame (socket.io transport-negotiation
+             *     round-trip). The actual event stream is over WebSockets after
+             *     the upgrade in `101`.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /**
+             * @description Handshake rejected — missing or invalid `auth.apiKey`. The
+             *     client must not auto-retry; fix credentials first.
+             */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
