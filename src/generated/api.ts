@@ -15,7 +15,8 @@ export interface paths {
          * List orders
          * @description Newest first, paginated (default 10). Rows are the
          *     `GET /orders/{orderId}` shape minus `financials` — fetch the
-         *     single order (or use the terminal webhooks) for that.
+         *     single order (or use the terminal webhooks) for that. For the
+         *     total count in the same window, call the sibling `/orders/count`.
          */
         get: operations["listOrders"];
         put?: never;
@@ -34,6 +35,29 @@ export interface paths {
          *     sample.
          */
         post: operations["createOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/orders/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Order count for the list window
+         * @description Total number of orders in the same window your `/orders` page
+         *     slices. Separate endpoint so page flips inside the same window
+         *     don't repay the count aggregation — cache the result and
+         *     refetch only when the window (`since`/`until`) changes.
+         */
+        get: operations["countOrders"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -475,10 +499,17 @@ export interface paths {
         /**
          * Per-order P&L for the workspace
          * @description Every completed / canceled order in the window, one row each,
-         *     with the workspace-perspective P&L (`income` = merchant slice
-         *     + punitive recoveries, `cost` = delivery fee + priced VAT, `net`
-         *     = income − cost). Order-driven — same-order legs never split
-         *     across pages.
+         *     with the workspace-perspective P&L. `incomeMinor` = `goodsMinor +
+         *     customerPaidMinor` on every row: `goodsMinor` carries the
+         *     merchant slice on `completed` and the goods-recovery amount on
+         *     `driver_abandoned_post_pickup` (`merchantAmountAtRisk`);
+         *     `customerPaidMinor` = `max(0, totalAmount − merchantAmount)` on
+         *     every cash row plus `completed` / `customer_refused` card rows
+         *     (owed-time re-stamp gives `totalAmount` its real-cash meaning on
+         *     cash terminal rows). `costMinor` = delivery fee + priced VAT
+         *     (both 0 on punitive rows — no service billed); `netMinor` =
+         *     income − cost. Order-driven — same-order legs never split across
+         *     pages.
          *
          *     For per-currency totals + order count across the whole window,
          *     call the sibling `/finance/reports/pnl-per-order/totals` and
@@ -909,9 +940,12 @@ export interface components {
                 /** @description Delivery fee (minor units). */
                 deliveryFee: number;
                 /**
-                 * @description Customer-facing total. Cash: what the driver collects at
-                 *     the door. Card: what your PSP charged (equals
-                 *     `prepaidAmount`). Minor units.
+                 * @description Customer-facing total. Cash: what the driver actually
+                 *     collected at the door on this row (0 on cash punitive /
+                 *     workspace-cancel rows where the driver never reached the
+                 *     door; the door-collected slice on cash `customer_refused`
+                 *     originals and cash return rows). Card: what your PSP
+                 *     charged (equals `prepaidAmount`). Minor units.
                  */
                 totalAmount: number;
                 /** @description Prepaid online total. Mirrors `totalAmount` on card; 0 on cash COD. */
@@ -1141,11 +1175,18 @@ export interface components {
                 total: number;
             };
         };
+        /**
+         * @description Items-only page. `limit`/`offset` count order rows. For the
+         *     total count in the same window, call the sibling `/orders/count`.
+         */
         OrderListResponse: {
             items: components["schemas"]["Order"][];
-            total: number;
             limit: number;
             offset: number;
+        };
+        OrderCountResponse: {
+            /** @description Total number of orders in the window (independent of `limit`/`offset`). */
+            total: number;
         };
         RatingResponse: {
             /** Format: altaer-id */
@@ -1766,6 +1807,10 @@ export interface components {
          *         driver was already dispatched (delivery invoice owed anyway).
          *       - `driver_abandoned_post_pickup` — driver walked off after
          *         pickup; punitive recovery makes your merchant slice whole.
+         *         On cash return rows (where the driver already collected
+         *         door-cash before absconding), extra `_cash_to_*` legs claw
+         *         that cash back to the workspace alongside the goods
+         *         recovery.
          *       - `customer_refused` — door refusal on a returnable order; the
          *         original closes as service-rendered and a linked return order
          *         runs on the same driver.
@@ -1794,7 +1839,7 @@ export interface components {
          *     workspaces already receive.
          * @enum {string}
          */
-        LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_dispatch.workspace_to_operator" | "own_fleet.workspace_canceled_post_dispatch.operator_to_driver" | "own_fleet.workspace_canceled_post_dispatch.platform_commission" | "network_user.workspace_canceled_post_dispatch.workspace_to_platform" | "network_operator.workspace_canceled_post_dispatch.platform_to_operator" | "network_operator.workspace_canceled_post_dispatch.operator_to_driver" | "network_operator.workspace_canceled_post_dispatch.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
+        LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_dispatch.workspace_to_operator" | "own_fleet.workspace_canceled_post_dispatch.operator_to_driver" | "own_fleet.workspace_canceled_post_dispatch.platform_commission" | "network_user.workspace_canceled_post_dispatch.workspace_to_platform" | "network_operator.workspace_canceled_post_dispatch.platform_to_operator" | "network_operator.workspace_canceled_post_dispatch.operator_to_driver" | "network_operator.workspace_canceled_post_dispatch.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.driver_cash_to_operator" | "own_fleet.driver_abandoned_post_pickup.operator_cash_to_workspace" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.driver_cash_to_operator" | "network_operator.driver_abandoned_post_pickup.operator_cash_to_platform" | "network_user.driver_abandoned_post_pickup.platform_cash_to_workspace" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
         /**
          * @description `collected_from` = the platform took cash from you (you owed).
          *     `paid_to`        = the platform paid cash to you (we owed).
@@ -2105,15 +2150,21 @@ export interface components {
         };
         /**
          * @description Terminal outcome from the workspace P&L's perspective.
-         *     `completed` — normal delivery; `workspace_canceled_post_dispatch` —
-         *     workspace canceled after dispatch (no income); `driver_abandoned_post_pickup`
-         *     — punitive scenario (income is the merchant recovery, not the sale).
+         *     `completed` — normal delivery; `customer_refused` — door refusal on
+         *     a returnable order (round-trip billed; income is the delivery
+         *     slice the customer paid at the door);
+         *     `workspace_canceled_post_dispatch` — workspace canceled after
+         *     dispatch (no income);
+         *     `driver_abandoned_post_pickup` — punitive scenario (income is the
+         *     goods recovery, surfaced in `goodsMinor`, plus any door-collected
+         *     cash on cash-return rows via `customerPaidMinor`).
          * @enum {string}
          */
-        PnlPerOrderStatus: "completed" | "workspace_canceled_post_dispatch" | "driver_abandoned_post_pickup";
+        PnlPerOrderStatus: "completed" | "customer_refused" | "workspace_canceled_post_dispatch" | "driver_abandoned_post_pickup";
         /**
          * @description One order's P&L row. All monetary fields are integer minor units
-         *     of `currency`. `costMinor = deliveryMinor + platformVatMinor`;
+         *     of `currency`. `incomeMinor = goodsMinor + customerPaidMinor`
+         *     uniformly; `costMinor = deliveryMinor + platformVatMinor`;
          *     `netMinor = incomeMinor − costMinor`.
          */
         PnlPerOrderRow: {
@@ -2124,9 +2175,9 @@ export interface components {
             createdAt: string;
             status: components["schemas"]["PnlPerOrderStatus"];
             paymentMethod: components["schemas"]["PaymentMethod"];
-            /** @description Merchant slice on `completed`; punitive recovery on `driver_abandoned_post_pickup`; 0 on `workspace_canceled_post_dispatch`. */
+            /** @description `goodsMinor + customerPaidMinor` on every row. */
             incomeMinor: number;
-            /** @description Merchant slice on `completed`; 0 on both canceled/punitive rows. */
+            /** @description Merchant slice on `completed`; goods recovery (`merchantAmountAtRisk`) on `driver_abandoned_post_pickup`; 0 on `customer_refused` (goods went back) and `workspace_canceled_post_dispatch` (never left). */
             goodsMinor: number;
             /** @description Ex-VAT delivery fee snapshot. 0 on punitive rows (no service billed). */
             deliveryMinor: number;
@@ -2134,6 +2185,8 @@ export interface components {
             platformVatMinor: number;
             /** @description `deliveryMinor + platformVatMinor`. */
             costMinor: number;
+            /** @description Delivery slice the customer paid on this row = `max(0, totalAmount − merchantAmount)`. Populated on every cash row (owed-time re-stamp gives `totalAmount` real-cash semantics: 0 on ordinary cash punitive / workspace-cancel, non-zero on cash `customer_refused` and cash-return rows where the driver collected the premium at the door) and on `completed` / `customer_refused` card rows; 0 on card `workspace_canceled_post_dispatch` and card `driver_abandoned_post_pickup` rows (which keep priced totals). */
+            customerPaidMinor: number;
             /** @description `incomeMinor − costMinor`. */
             netMinor: number;
         };
@@ -2165,6 +2218,7 @@ export interface components {
             deliveryMinor: number;
             platformVatMinor: number;
             costMinor: number;
+            customerPaidMinor: number;
             netMinor: number;
         };
         PnlPerOrderTotalsResponse: {
@@ -2476,6 +2530,32 @@ export interface operations {
             };
             401: components["responses"]["AuthError"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    countOrders: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                since?: string;
+                /** @description Inclusive upper bound on `createdAt` (YYYY-MM-DD). Omit for unbounded. */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Total orders in the window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderCountResponse"];
+                };
+            };
+            401: components["responses"]["AuthError"];
         };
     };
     getOrder: {

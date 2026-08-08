@@ -2,6 +2,32 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.48] — 2026-08-06
+
+Cash punitive on return orders — where the driver already collected door-cash before absconding — now claws that cash back to the workspace alongside the goods recovery. Adds five ledger types to `LedgerEntryType` (all under `driver_abandoned_post_pickup`).
+
+### Added
+
+- `own_fleet.driver_abandoned_post_pickup.driver_cash_to_operator` + `operator_cash_to_workspace` (direct routing), and `network_operator.driver_abandoned_post_pickup.driver_cash_to_operator` + `operator_cash_to_platform` + `network_user.driver_abandoned_post_pickup.platform_cash_to_workspace` (via_platform routing) — restitution legs that self-skip at amount 0 on ordinary punitive rows (owed-time re-stamp sets `totalAmount = 0`) and carry the door-collected cash on cash-return rows.
+
+### Changed
+
+- **`payment.totalAmount` on cash terminal rows is now the amount actually collected on that row.** Ordinary cash punitive / workspace-cancel rows read `0` (nothing collected pre-dropoff); cash `customer_refused` originals and cash return rows carry the door-collected slice. Card totals unchanged.
+- **`GET /finance/reports/pnl-per-order`**: `incomeMinor = goodsMinor + customerPaidMinor` on every row (previously punitive rows returned recovery in `incomeMinor` with `goodsMinor = 0`). `goodsMinor` now carries the goods-recovery on `driver_abandoned_post_pickup`; `customerPaidMinor` is populated on every cash row (not just `completed` / `customer_refused`) — cash punitive on ordinary rows still reads `0` there via the re-stamp.
+
+## [0.0.47] — 2026-08-06
+
+Per-order P&L switches to the real-cash convention: rows surface what the end customer actually paid for delivery, and door-refused orders get their own status.
+
+### Changed
+
+- **`incomeMinor` on `GET /finance/reports/pnl-per-order` (+ `/totals`) now includes the customer-paid delivery slice.** On `completed` / `customer_refused` rows, income = merchant slice + `customerPaidMinor`, so `netMinor` reflects the workspace's real out-of-pocket — a customer-funded delivery nets to the goods amount instead of booking the delivery bill as a loss.
+
+### Added
+
+- `customerPaidMinor` on P&L rows and window totals — `max(0, totalAmount − merchantAmount)`, the delivery slice the customer actually paid on the row. `0` on statuses whose `totalAmount` is not customer-collected money (`workspace_canceled_post_dispatch`, `driver_abandoned_post_pickup`).
+- P&L `status` value `customer_refused` — door-refused originals were previously reported as `workspace_canceled_post_dispatch`.
+
 ## [0.0.46] - 2026-08-05
 
 New shapes

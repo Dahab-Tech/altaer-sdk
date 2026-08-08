@@ -1,9 +1,11 @@
 import type { HttpClient, RequestOptions } from '../http';
 import type {
   CancelOrderInput,
+  CountOrdersInput,
   CreateOrderInput,
   ListOrdersInput,
   Order,
+  OrderCountResponse,
   OrderListResponse,
   Quote,
   QuoteInput,
@@ -40,6 +42,20 @@ export class OrdersResource {
     if (input?.until) params.set('until', input.until);
     const qs = params.toString();
     return this.http.get<OrderListResponse>(`/api/v1/workspaces/orders${qs ? `?${qs}` : ''}`, opts);
+  }
+
+  /** Total number of orders in the same window `list(...)` slices.
+   *  Cache per window — refetch only on window (`since`/`until`) change,
+   *  not on every page flip. */
+  async count(input?: CountOrdersInput, opts?: RequestOptions): Promise<OrderCountResponse> {
+    const params = new URLSearchParams();
+    if (input?.since) params.set('since', input.since);
+    if (input?.until) params.set('until', input.until);
+    const qs = params.toString();
+    return this.http.get<OrderCountResponse>(
+      `/api/v1/workspaces/orders/count${qs ? `?${qs}` : ''}`,
+      opts
+    );
   }
 
   /** Cancel an order. `canceledBy` is audit-trail only; reserved `driver`/`system` are rejected

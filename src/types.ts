@@ -66,6 +66,14 @@ export interface ListOrdersInput {
   until?: string;
 }
 
+/** Optional query for `client.orders.count(input?)`. Same window
+ *  semantics as `list(...)` — call this once per window and cache the
+ *  result across page flips. */
+export interface CountOrdersInput {
+  since?: string;
+  until?: string;
+}
+
 // ── Finance request inputs ───────────────────────────────────────────
 
 /** Optional query for `client.finance.ledger(input?)` and
@@ -136,6 +144,7 @@ export interface StatementInput {
 export type Order = Schemas['Order'];
 export type Quote = Schemas['Quote'];
 export type OrderListResponse = Schemas['OrderListResponse'];
+export type OrderCountResponse = Schemas['OrderCountResponse'];
 export type RatingResponse = Schemas['RatingResponse'];
 export type OrderFinancials = Schemas['OrderFinancials'];
 
