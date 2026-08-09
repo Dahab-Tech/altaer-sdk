@@ -2,6 +2,19 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.50] — 2026-08-08
+
+Rename: the workspace-cancel outcome segment in `LedgerEntryType` is now `workspace_canceled_post_pickup` (was `workspace_canceled_post_dispatch`). Semantics are unchanged — these legs only ever fire when the workspace cancels after pickup (pre-pickup cancels write no ledger rows); the name now states the real gate and matches the order-level `workspace_cancel_post_pickup` outcome.
+
+### Breaking
+
+- **`LedgerEntryType`: `workspace_canceled_post_dispatch` → `workspace_canceled_post_pickup`** in all seven values: `own_fleet.workspace_canceled_post_pickup.workspace_to_operator` / `.operator_to_driver` / `.platform_commission`, `network_user.workspace_canceled_post_pickup.workspace_to_platform`, `network_operator.workspace_canceled_post_pickup.platform_to_operator` / `.operator_to_driver` / `.platform_commission`. Update string literals and exhaustive `switch` arms — no behavioral change.
+- **P&L `status` value on `GET /finance/reports/pnl-per-order` (+ `/totals`)** renamed the same way: `workspace_canceled_post_dispatch` → `workspace_canceled_post_pickup`.
+
+### Fixed
+
+- Cash workspace-cancel on Altaer-network routing: the `workspace_to_platform` / `platform_to_operator` clearing legs now carry the full delivery invoice (`subtotal + VAT`). They previously booked the ex-VAT fee, so ledger entries and the workspace ↔ Altaer balance understated the obligation by the invoice VAT.
+
 ## [0.0.48] — 2026-08-06
 
 Cash punitive on return orders — where the driver already collected door-cash before absconding — now claws that cash back to the workspace alongside the goods recovery. Adds five ledger types to `LedgerEntryType` (all under `driver_abandoned_post_pickup`).

@@ -1,6 +1,6 @@
 {
   "name": "@dahab-tech/altaer-sdk",
-  "version": "0.0.49",
+  "version": "0.0.50",
   "description": "Official Node.js / TypeScript SDK for the Altaer delivery dispatch API",
   "keywords": [
     "altaer",

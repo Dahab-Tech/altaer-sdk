@@ -1803,7 +1803,7 @@ export interface components {
          *         ordering workspace.
          *     - **outcome**
          *       - `completed` — driver dropped off; service rendered.
-         *       - `workspace_canceled_post_dispatch` — you canceled after a
+         *       - `workspace_canceled_post_pickup` — you canceled after a
          *         driver was already dispatched (delivery invoice owed anyway).
          *       - `driver_abandoned_post_pickup` — driver walked off after
          *         pickup; punitive recovery makes your merchant slice whole.
@@ -1839,7 +1839,7 @@ export interface components {
          *     workspaces already receive.
          * @enum {string}
          */
-        LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_dispatch.workspace_to_operator" | "own_fleet.workspace_canceled_post_dispatch.operator_to_driver" | "own_fleet.workspace_canceled_post_dispatch.platform_commission" | "network_user.workspace_canceled_post_dispatch.workspace_to_platform" | "network_operator.workspace_canceled_post_dispatch.platform_to_operator" | "network_operator.workspace_canceled_post_dispatch.operator_to_driver" | "network_operator.workspace_canceled_post_dispatch.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.driver_cash_to_operator" | "own_fleet.driver_abandoned_post_pickup.operator_cash_to_workspace" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.driver_cash_to_operator" | "network_operator.driver_abandoned_post_pickup.operator_cash_to_platform" | "network_user.driver_abandoned_post_pickup.platform_cash_to_workspace" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
+        LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_pickup.workspace_to_operator" | "own_fleet.workspace_canceled_post_pickup.operator_to_driver" | "own_fleet.workspace_canceled_post_pickup.platform_commission" | "network_user.workspace_canceled_post_pickup.workspace_to_platform" | "network_operator.workspace_canceled_post_pickup.platform_to_operator" | "network_operator.workspace_canceled_post_pickup.operator_to_driver" | "network_operator.workspace_canceled_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.driver_cash_to_operator" | "own_fleet.driver_abandoned_post_pickup.operator_cash_to_workspace" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.driver_cash_to_operator" | "network_operator.driver_abandoned_post_pickup.operator_cash_to_platform" | "network_user.driver_abandoned_post_pickup.platform_cash_to_workspace" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
         /**
          * @description `collected_from` = the platform took cash from you (you owed).
          *     `paid_to`        = the platform paid cash to you (we owed).
@@ -2153,14 +2153,14 @@ export interface components {
          *     `completed` — normal delivery; `customer_refused` — door refusal on
          *     a returnable order (round-trip billed; income is the delivery
          *     slice the customer paid at the door);
-         *     `workspace_canceled_post_dispatch` — workspace canceled after
+         *     `workspace_canceled_post_pickup` — workspace canceled after
          *     dispatch (no income);
          *     `driver_abandoned_post_pickup` — punitive scenario (income is the
          *     goods recovery, surfaced in `goodsMinor`, plus any door-collected
          *     cash on cash-return rows via `customerPaidMinor`).
          * @enum {string}
          */
-        PnlPerOrderStatus: "completed" | "customer_refused" | "workspace_canceled_post_dispatch" | "driver_abandoned_post_pickup";
+        PnlPerOrderStatus: "completed" | "customer_refused" | "workspace_canceled_post_pickup" | "driver_abandoned_post_pickup";
         /**
          * @description One order's P&L row. All monetary fields are integer minor units
          *     of `currency`. `incomeMinor = goodsMinor + customerPaidMinor`
@@ -2177,7 +2177,7 @@ export interface components {
             paymentMethod: components["schemas"]["PaymentMethod"];
             /** @description `goodsMinor + customerPaidMinor` on every row. */
             incomeMinor: number;
-            /** @description Merchant slice on `completed`; goods recovery (`merchantAmountAtRisk`) on `driver_abandoned_post_pickup`; 0 on `customer_refused` (goods went back) and `workspace_canceled_post_dispatch` (never left). */
+            /** @description Merchant slice on `completed`; goods recovery (`merchantAmountAtRisk`) on `driver_abandoned_post_pickup`; 0 on `customer_refused` (goods went back) and `workspace_canceled_post_pickup` (never left). */
             goodsMinor: number;
             /** @description Ex-VAT delivery fee snapshot. 0 on punitive rows (no service billed). */
             deliveryMinor: number;
@@ -2185,7 +2185,7 @@ export interface components {
             platformVatMinor: number;
             /** @description `deliveryMinor + platformVatMinor`. */
             costMinor: number;
-            /** @description Delivery slice the customer paid on this row = `max(0, totalAmount − merchantAmount)`. Populated on every cash row (owed-time re-stamp gives `totalAmount` real-cash semantics: 0 on ordinary cash punitive / workspace-cancel, non-zero on cash `customer_refused` and cash-return rows where the driver collected the premium at the door) and on `completed` / `customer_refused` card rows; 0 on card `workspace_canceled_post_dispatch` and card `driver_abandoned_post_pickup` rows (which keep priced totals). */
+            /** @description Delivery slice the customer paid on this row = `max(0, totalAmount − merchantAmount)`. Populated on every cash row (owed-time re-stamp gives `totalAmount` real-cash semantics: 0 on ordinary cash punitive / workspace-cancel, non-zero on cash `customer_refused` and cash-return rows where the driver collected the premium at the door) and on `completed` / `customer_refused` card rows; 0 on card `workspace_canceled_post_pickup` and card `driver_abandoned_post_pickup` rows (which keep priced totals). */
             customerPaidMinor: number;
             /** @description `incomeMinor − costMinor`. */
             netMinor: number;
