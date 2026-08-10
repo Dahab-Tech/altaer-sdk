@@ -327,18 +327,22 @@ export interface paths {
          *     Sign convention on every `.net` field: **positive = YOU owe them,
          *     negative = they owe YOU** — same rule across all three slices.
          *
-         *     - **`workspaceAltaer`** — your workspace's position with Altaer.
+         *     Each slice is one of the letter-badged cards on the hub
+         *     **Money → Overview** page — the A / B / C badges there are these
+         *     three slices:
+         *
+         *     - **`workspaceAltaer`** (Card A) — your workspace's position with Altaer.
          *       Non-null for every tenant using the Altaer network. Null only
          *       when you're an own-fleet-only operator with a zero Altaer
          *       position. Widens `.net` with `merchantHeldByAltaer` +
          *       `deliveryOwedToAltaer` + `unsettledOrdersCount` for reconciliation.
-         *     - **`operatorAltaer`** — commission balance your operator owes
+         *     - **`operatorAltaer`** (Card B) — commission balance your operator owes
          *       Altaer on **this workspace's orders only** (workspace-scoped).
          *       Includes settlement offsets: the commission-settle writer stamps
          *       `workspaceId` on each per-workspace settle slice, so accruals
          *       minus attributed settlements = actionable balance for this
          *       workspace. Null unless you operate a fleet.
-         *     - **`operatorWorkspace`** (singular) — off-platform position between
+         *     - **`operatorWorkspace`** (Card C; singular) — off-platform position between
          *       your workspace and its operator (own-fleet direct-routing
          *       bookkeeping). Null unless you operate a fleet.
          *
@@ -421,9 +425,13 @@ export interface paths {
         };
         /**
          * Paginated settlement history
-         * @description Every recorded cash movement, newest first. `collected_from` =
-         *     the platform took cash from you (you owed); `paid_to` = it paid
-         *     you (it owed).
+         * @description Every recorded cash movement, newest first. `flow` names both
+         *     parties as `fromParty_to_toParty` — `workspace_to_platform` you
+         *     paid Altaer; `platform_to_workspace` Altaer paid you;
+         *     `workspace_to_operator` / `operator_to_workspace` off-platform
+         *     records with your own operator; `operator_to_platform` /
+         *     `platform_to_operator` your operator settled commission with
+         *     Altaer (your balance doesn't move — informational).
          *
          *     For the total count in the same window, call the sibling
          *     `/finance/settlements/count` — separated so page flips don't
@@ -1288,12 +1296,13 @@ export interface components {
             workspaceId: string;
             currency: components["schemas"]["Currency"];
             /**
-             * @description `collected_from` = you paid the platform; `paid_to` = it
-             *     paid you. Per-origin direction is the sign of each
-             *     `breakdown` bucket — mixed signs are legal.
-             * @enum {string}
+             * @description Cash-direction party pair. `workspace_to_platform` — you
+             *     paid Altaer (delivery invoice); `platform_to_workspace` —
+             *     Altaer paid you (merchant slice payout). Per-origin
+             *     direction is the sign of each `breakdown` bucket — mixed
+             *     signs are legal.
              */
-            direction: "collected_from" | "paid_to";
+            flow: components["schemas"]["LedgerFlow"];
             provider: components["schemas"]["SettlementProviderWire"];
             /** Format: date-time */
             paidAt: string;
@@ -1321,9 +1330,9 @@ export interface components {
             data: components["schemas"]["AltaerBalanceReversedPayload"];
         };
         /**
-         * @description Reversal of a balance settle: same shape, `direction`
-         *     flipped. `breakdown` is a sign-preserved copy of the original —
-         *     apply it with the OPPOSITE sign so forward + reversal cancel.
+         * @description Reversal of a balance settle: same shape, `flow` arrow flipped.
+         *     `breakdown` is a sign-preserved copy of the original — apply it
+         *     with the OPPOSITE sign so forward + reversal cancel.
          */
         AltaerBalanceReversedPayload: {
             /**
@@ -1339,11 +1348,8 @@ export interface components {
             /** Format: altaer-id */
             workspaceId: string;
             currency: components["schemas"]["Currency"];
-            /**
-             * @description OPPOSITE of the original settle's total direction.
-             * @enum {string}
-             */
-            direction: "collected_from" | "paid_to";
+            /** @description OPPOSITE arrow of the original settle's flow. */
+            flow: components["schemas"]["LedgerFlow"];
             /**
              * @description Reversal magnitude (minor units) — less than the original on
              *     a partial refund. Sum partials by `originalSettlementId`.
@@ -1404,12 +1410,10 @@ export interface components {
             operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
-             * @description Operator's POV — forward settles are always `collected_from`
-             *     (Altaer collected the commission). Kept for symmetry with
-             *     the reversal event.
-             * @enum {string}
+             * @description Cash-direction party pair. Forward events are always
+             *     `operator_to_platform` (operator paid Altaer commission).
              */
-            direction: "paid_to" | "collected_from";
+            flow: components["schemas"]["LedgerFlow"];
             provider: components["schemas"]["SettlementProviderWire"];
             note?: string | null;
             /** @description Your slice of the operator's total settle (minor units). */
@@ -1419,7 +1423,7 @@ export interface components {
             paidAt: string;
             /**
              * @description Per-origin slice of your commission portion — API
-             *     integrators read `breakdown.api`. Sign matches `direction`.
+             *     integrators read `breakdown.api`. Sign matches `flow`.
              */
             breakdown: components["schemas"]["OriginBreakdown"];
             metadata: {
@@ -1448,11 +1452,8 @@ export interface components {
             /** Format: altaer-id */
             operatorId: string;
             currency: components["schemas"]["Currency"];
-            /**
-             * @description OPPOSITE of the original settle's direction.
-             * @enum {string}
-             */
-            direction: "paid_to" | "collected_from";
+            /** @description OPPOSITE arrow of the original settle's flow — usually `platform_to_operator`. */
+            flow: components["schemas"]["LedgerFlow"];
             /** @description Your slice of the reversal (minor units); can be < the original on partial refund. */
             amount: number;
             provider: components["schemas"]["SettlementProviderWire"];
@@ -1464,7 +1465,7 @@ export interface components {
             originalPaidAt: string;
             /**
              * @description Per-origin slice of the reversal — mirror of the forward
-             *     settle's breakdown, sign matches this event's `direction`.
+             *     settle's breakdown, sign matches this event's `flow`.
              */
             breakdown: components["schemas"]["OriginBreakdown"];
             metadata: {
@@ -1498,7 +1499,7 @@ export interface components {
         };
         /**
          * @description Off-platform settle between operator and workspace, record-only
-         *     (Altaer doesn't move money). Direction is the OPERATOR's POV;
+         *     (Altaer doesn't move money). `flow` names the cash direction;
          *     `initiatedBy` distinguishes which side hit the button.
          */
         OperatorFleetBalanceRecordedPayload: {
@@ -1510,12 +1511,11 @@ export interface components {
             operatorId: string;
             currency: components["schemas"]["Currency"];
             /**
-             * @description Operator's POV.
-             *       • `paid_to` — operator paid workspace (cash COD goods value handed back).
-             *       • `collected_from` — operator received from workspace (card prepay delivery fee).
-             * @enum {string}
+             * @description Cash-direction party pair.
+             *       • `operator_to_workspace` — operator paid workspace (cash COD goods value handed back).
+             *       • `workspace_to_operator` — workspace paid operator (card prepay delivery fee).
              */
-            direction: "paid_to" | "collected_from";
+            flow: components["schemas"]["LedgerFlow"];
             /**
              * @description Which side hit the button.
              * @enum {string}
@@ -1530,106 +1530,9 @@ export interface components {
             paidAt: string;
             /**
              * @description Per-origin signed slice — same shape Altaer-balance settles use. API
-             *     integrators read `breakdown.api`. Sign matches `direction`.
+             *     integrators read `breakdown.api`. Sign matches `flow`.
              */
             breakdown: components["schemas"]["OriginBreakdown"];
-        };
-        WebhookEnvelopeFleetDriverBalanceSettled: components["schemas"]["WebhookEnvelopeBase"] & {
-            /** @enum {string} */
-            type: "workspace.fleet_driver_balance.settled";
-            data: components["schemas"]["FleetDriverBalanceSettledPayload"];
-        };
-        /**
-         * @description Method the operator flagged at settle-time — no PSP ref because
-         *     driver settles are typically off-platform (cash / operator's own PSP).
-         */
-        FleetDriverProviderWire: {
-            /**
-             * @description `cash` — operator handed cash to / took cash from the driver.
-             *     `psp` — operator used their own PSP (Altaer didn't route it).
-             * @enum {string}
-             */
-            method: "cash" | "psp";
-        };
-        /**
-         * @description Signed operator-POV balance snapshot: positive = operator owed
-         *     the driver; negative = driver owed the operator.
-         */
-        FleetDriverAmountsWire: {
-            balanceBefore: number;
-            /** @description Signed balance after the settle — usually 0; partial permitted. */
-            balanceAfter: number;
-        };
-        /**
-         * @description Operator settled one of their fleet drivers off-platform.
-         *     Record-only — Altaer doesn't move the money. Delivered to the
-         *     operator's own workspace.
-         */
-        FleetDriverBalanceSettledPayload: {
-            /** Format: altaer-id */
-            settlementId: string;
-            /** Format: altaer-id */
-            operatorId: string;
-            /** Format: altaer-id */
-            driverId: string;
-            /** Format: altaer-id */
-            fleetId: string;
-            currency: components["schemas"]["Currency"];
-            /**
-             * @description Operator's POV.
-             *       • `paid_to` — operator paid driver their outstanding earnings.
-             *       • `collected_from` — operator received cash COD the driver held.
-             * @enum {string}
-             */
-            direction: "paid_to" | "collected_from";
-            provider: components["schemas"]["FleetDriverProviderWire"];
-            /** Format: date-time */
-            paidAt: string;
-            note?: string | null;
-            /** @description Integer minor units, magnitude (always positive). */
-            amount: number;
-            amounts: components["schemas"]["FleetDriverAmountsWire"];
-        };
-        WebhookEnvelopeFleetDriverBalanceReversed: components["schemas"]["WebhookEnvelopeBase"] & {
-            /** @enum {string} */
-            type: "workspace.fleet_driver_balance.reversed";
-            data: components["schemas"]["FleetDriverBalanceReversedPayload"];
-        };
-        /**
-         * @description Reversal of a prior fleet-driver settle. Fires on PSP-driven
-         *     reversal (rare — driver settles are typically cash). Join the
-         *     forward via `originalSettlementId`.
-         */
-        FleetDriverBalanceReversedPayload: {
-            /** Format: altaer-id */
-            settlementId: string;
-            /**
-             * Format: altaer-id
-             * @description ID of the settled row this reverses — the join key.
-             */
-            originalSettlementId: string;
-            /** Format: altaer-id */
-            operatorId: string;
-            /** Format: altaer-id */
-            driverId: string;
-            /** Format: altaer-id */
-            fleetId: string;
-            currency: components["schemas"]["Currency"];
-            /**
-             * @description OPPOSITE of the original settle's direction.
-             * @enum {string}
-             */
-            direction: "paid_to" | "collected_from";
-            /** @description Reversal magnitude (minor units); can be < original on partial refund. */
-            amount: number;
-            provider: components["schemas"]["SettlementProviderWire"];
-            /** @description Original settlement's provider.ref. Null when the original was cash / had no PSP ref. */
-            originalProviderRef?: string | null;
-            reason: string;
-            /** Format: date-time */
-            reversedAt: string;
-            /** Format: date-time */
-            originalPaidAt: string;
         };
         /**
          * @description Public-facing fleet snapshot embedded in every fleet.* webhook.
@@ -1782,11 +1685,12 @@ export interface components {
             };
         };
         /**
-         * @description Structured `<scope>.<outcome>.<direction>` name naming what happened
-         *     and between which two accounts. Direction of money in your books
-         *     still lives on `amount.direction` (`out` = money going out of your
-         *     balance, `in` = money coming into it) — the `_to_` in the type name
-         *     is the obligation direction of the underlying leg, not your view.
+         * @description Structured `<scope>.<outcome>.<flow>` name naming what happened
+         *     and between which two accounts. The `_to_` in the type-name
+         *     suffix is the ledger's internal obligation-arrow — not always the
+         *     actual cash direction. For the party pair that actually moved
+         *     cash, read the sibling `flow` field (a `LedgerFlow` enum) — it
+         *     reflects `fromParty → toParty` in real money terms.
          *
          *     Segments:
          *
@@ -1803,8 +1707,8 @@ export interface components {
          *         ordering workspace.
          *     - **outcome**
          *       - `completed` — driver dropped off; service rendered.
-         *       - `workspace_canceled_post_pickup` — you canceled after a
-         *         driver was already dispatched (delivery invoice owed anyway).
+         *       - `workspace_canceled_post_pickup` — you canceled after the
+         *         driver had already picked up (delivery invoice owed anyway).
          *       - `driver_abandoned_post_pickup` — driver walked off after
          *         pickup; punitive recovery makes your merchant slice whole.
          *         On cash return rows (where the driver already collected
@@ -1841,11 +1745,29 @@ export interface components {
          */
         LedgerEntryType: "own_fleet.completed.operator_to_workspace" | "own_fleet.completed.workspace_to_operator" | "own_fleet.completed.driver_to_operator" | "own_fleet.completed.operator_to_driver" | "own_fleet.completed.platform_commission" | "network_operator.completed.operator_to_platform" | "network_operator.completed.platform_to_operator" | "network_operator.completed.driver_to_operator" | "network_operator.completed.operator_to_driver" | "network_operator.completed.platform_commission" | "network_user.completed.platform_to_workspace" | "network_user.completed.workspace_to_platform" | "own_fleet.workspace_canceled_post_pickup.workspace_to_operator" | "own_fleet.workspace_canceled_post_pickup.operator_to_driver" | "own_fleet.workspace_canceled_post_pickup.platform_commission" | "network_user.workspace_canceled_post_pickup.workspace_to_platform" | "network_operator.workspace_canceled_post_pickup.platform_to_operator" | "network_operator.workspace_canceled_post_pickup.operator_to_driver" | "network_operator.workspace_canceled_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.operator_to_workspace" | "own_fleet.driver_abandoned_post_pickup.driver_to_operator" | "own_fleet.driver_abandoned_post_pickup.platform_commission" | "own_fleet.driver_abandoned_post_pickup.driver_cash_to_operator" | "own_fleet.driver_abandoned_post_pickup.operator_cash_to_workspace" | "network_operator.driver_abandoned_post_pickup.operator_to_platform" | "network_user.driver_abandoned_post_pickup.platform_to_workspace" | "network_operator.driver_abandoned_post_pickup.driver_to_operator" | "network_operator.driver_abandoned_post_pickup.platform_commission" | "network_operator.driver_abandoned_post_pickup.driver_cash_to_operator" | "network_operator.driver_abandoned_post_pickup.operator_cash_to_platform" | "network_user.driver_abandoned_post_pickup.platform_cash_to_workspace" | "own_fleet.customer_refused.driver_to_operator" | "own_fleet.customer_refused.operator_to_driver" | "own_fleet.customer_refused.workspace_to_operator" | "network_user.customer_refused.workspace_to_platform" | "network_operator.customer_refused.platform_to_operator" | "own_fleet.customer_refused.platform_commission" | "network_operator.customer_refused.platform_commission" | "settlement" | "settlement_reversal" | "adjustment";
         /**
-         * @description `collected_from` = the platform took cash from you (you owed).
-         *     `paid_to`        = the platform paid cash to you (we owed).
+         * @description Cash-direction party pair for one money movement.
+         *     `fromParty_to_toParty` — the party on the left gave money, the
+         *     party on the right received it. Same vocabulary on
+         *     `LedgerEntry.flow` (per-order legs) and `Settlement.flow`
+         *     (cash movements clearing balances).
+         *
+         *     Tenant filters:
+         *       • Rows you paid out on → `flow.startsWith('workspace_to_')`.
+         *       • Rows you received on → `flow.endsWith('_to_workspace')`.
+         *       • Off-platform records between you and your operator →
+         *         `workspace_to_operator` / `operator_to_workspace`.
+         *       • Rows your operator moved with Altaer (informational, your
+         *         workspace balance doesn't change) → `operator_to_platform`
+         *         / `platform_to_operator`.
+         *
+         *     `driver_*` flows only surface on the ledger stream for own-fleet
+         *     workspaces (where the workspace's operator settles their own
+         *     drivers). Never appears on the settlements stream — driver
+         *     settles between operator and driver aren't a workspace book
+         *     entry.
          * @enum {string}
          */
-        SettlementDirection: "collected_from" | "paid_to";
+        LedgerFlow: "workspace_to_platform" | "platform_to_workspace" | "operator_to_platform" | "platform_to_operator" | "operator_to_workspace" | "workspace_to_operator" | "driver_to_operator" | "operator_to_driver";
         /**
          * @description Three workspace-scoped balance slices in one envelope, each
          *     nullable so the body shape stays stable across every tenant
@@ -1921,9 +1843,9 @@ export interface components {
          * @description Lifetime totals of every ledger row, split by the two workspace-side
          *     accruals plus settlements + adjustments. Minor units of `currency`
          *     (single-currency by contract). Altaer's internal splits (commission,
-         *     driver earning) are not exposed. Only surfaced inside `/finance/statement`
-         *     — the standalone summary endpoint was removed in favor of the
-         *     richer `BalanceResponse`.
+         *     driver earning) are not exposed. Only surfaced inside
+         *     `/finance/statement`; for live positions use the richer
+         *     `BalanceResponse` from `/finance/balance`.
          */
         FinanceSummary: {
             currency: components["schemas"]["Currency"];
@@ -1948,33 +1870,29 @@ export interface components {
          *     `economics`, `cancellation`, `writtenAt`) live on the parent
          *     `LedgerOrderGroup` since every leg in a group shares them.
          *
-         *     `amount` is a grouped `{ value, direction }` block: `value` is
-         *     always ≥ 0; `direction` says whether the leg moves money OUT of
-         *     (`out`) or IN to (`in`) the workspace's balance.
+         *     `amount` is a positive magnitude; `flow` names the parties on
+         *     each side (`fromParty` gave money, `toParty` received). Own-fleet
+         *     workspaces additionally see `driver_to_operator` /
+         *     `operator_to_driver` legs (their own operator paying/collecting
+         *     with their own driver).
          */
         LedgerEntry: {
             /** Format: altaer-id */
             id: string;
             type: components["schemas"]["LedgerEntryType"];
-            amount: components["schemas"]["LedgerEntryAmount"];
-        };
-        /**
-         * @description Grouped workspace-perspective amount. `value` is always ≥ 0 —
-         *     sign it per `direction` when rolling into a balance.
-         */
-        LedgerEntryAmount: {
-            /** @description Magnitude of the workspace↔platform delta (minor units), always ≥ 0. */
-            value: number;
-            /**
-             * @description Workspace POV. `out` = money going out of your balance (an obligation-adding event — you owe more, or you paid). `in` = money coming in (an obligation-reducing event — you were paid, or a debt was cleared).
-             * @enum {string}
-             */
-            direction: "in" | "out";
+            /** @description Absolute magnitude in minor units of the group currency. Sign is implicit in `flow` — the reader knows their role (from vs to). */
+            amount: number;
+            flow: components["schemas"]["LedgerFlow"];
         };
         /**
          * @description A real-world money movement clearing your balance.
          *     `period.from` = the previous settlement's `createdAt` (null on
          *     the first ever); `period.to` = this row's `createdAt`.
+         *
+         *     `flow` names the parties on each side using the same enum as
+         *     `LedgerEntry.flow`. Never carries `driver_*` flows — driver
+         *     settles between operator and driver are not a workspace book
+         *     entry.
          */
         Settlement: {
             /** Format: altaer-id */
@@ -1982,7 +1900,7 @@ export interface components {
             currency: components["schemas"]["Currency"];
             /** @description Absolute magnitude, integer minor units. */
             amount: number;
-            direction: components["schemas"]["SettlementDirection"];
+            flow: components["schemas"]["LedgerFlow"];
             /** @description Signed balance snapshot before/after this settle (minor units). */
             amounts: {
                 /** @description Signed; minor units. */
@@ -2154,7 +2072,7 @@ export interface components {
          *     a returnable order (round-trip billed; income is the delivery
          *     slice the customer paid at the door);
          *     `workspace_canceled_post_pickup` — workspace canceled after
-         *     dispatch (no income);
+         *     pickup (no income);
          *     `driver_abandoned_post_pickup` — punitive scenario (income is the
          *     goods recovery, surfaced in `goodsMinor`, plus any door-collected
          *     cash on cash-return rows via `customerPaidMinor`).

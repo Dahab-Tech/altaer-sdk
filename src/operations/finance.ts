@@ -60,10 +60,11 @@ export class FinanceResource {
     );
   }
 
-  /** Paginated settlement history. `direction='collected_from'` means
-   *  the platform took cash FROM you; `direction='paid_to'` means the
-   *  platform paid cash TO you. Call `settlementsCount` for the total
-   *  count in the same window (cache across page flips). */
+  /** Paginated settlement history. `flow` is the cash-direction party
+   *  pair: `workspace_to_platform` means you paid Altaer;
+   *  `platform_to_workspace` means Altaer paid you. Call
+   *  `settlementsCount` for the total count in the same window (cache
+   *  across page flips). */
   async settlements(
     input?: FinancePaginationInput,
     opts?: RequestOptions

@@ -150,29 +150,34 @@ export type OrderFinancials = Schemas['OrderFinancials'];
 
 // Finance responses.
 /** Three-slice envelope, single-currency (workspace's currency at the root).
- *  `workspaceAltaer` — your workspace's position vs Altaer.
- *  `operatorAltaer` — commission on THIS workspace's orders only (null
- *  unless you operate a fleet).
- *  `operatorWorkspace` (singular) — off-platform position between your
- *  workspace and its operator (null unless you operate a fleet).
+ *  Slices match the A/B/C letter badges on the hub Money → Overview cards.
+ *  `workspaceAltaer` — Card A, your workspace's position vs Altaer.
+ *  `operatorAltaer` — Card B, commission on THIS workspace's orders only
+ *  (null unless you operate a fleet).
+ *  `operatorWorkspace` — Card C (singular), off-platform position between
+ *  your workspace and its operator (null unless you operate a fleet).
  *  Each slice is independently nullable — use presence to decide
  *  visibility. */
 export type BalanceResponse = Schemas['BalanceResponse'];
-/** One slice of `BalanceResponse.workspaceAltaer`. */
+/** One slice of `BalanceResponse.workspaceAltaer` (Card A). */
 export type WorkspaceAltaerPosition = NonNullable<Schemas['BalanceResponse']['workspaceAltaer']>;
-/** One slice of `BalanceResponse.operatorAltaer`. */
+/** One slice of `BalanceResponse.operatorAltaer` (Card B). */
 export type OperatorAltaerPosition = NonNullable<Schemas['BalanceResponse']['operatorAltaer']>;
-/** One slice of `BalanceResponse.operatorWorkspace` (singular — workspace vs its operator). */
+/** One slice of `BalanceResponse.operatorWorkspace` (Card C; singular — workspace vs its operator). */
 export type OperatorWorkspacePosition = NonNullable<
   Schemas['BalanceResponse']['operatorWorkspace']
 >;
-/** Surfaced inside `Statement.summary` — the standalone
- *  `/finance/summary` endpoint has been removed. */
+/** Surfaced inside `Statement.summary` only; live positions come from
+ *  `finance.balance()`. */
 export type FinanceSummary = Schemas['FinanceSummary'];
 export type LedgerEntry = Schemas['LedgerEntry'];
 export type LedgerEntryType = Schemas['LedgerEntryType'];
 export type Settlement = Schemas['Settlement'];
-export type SettlementDirection = Schemas['SettlementDirection'];
+/** Cash-direction party pair — `fromParty_to_toParty`. Same enum on
+ *  `LedgerEntry.flow` and `Settlement.flow`. Tenant filters: rows you
+ *  paid = `.startsWith('workspace_to_')`, rows you received =
+ *  `.endsWith('_to_workspace')`. */
+export type LedgerFlow = Schemas['LedgerFlow'];
 /** One item in the paginated `/finance/ledger` stream — an order and its ledger legs. */
 export type LedgerOrderGroup = Schemas['LedgerOrderGroup'];
 /** Per-order economics snapshot on `LedgerOrderGroup.economics`. Hoisted
@@ -268,10 +273,6 @@ export type WebhookEventType =
   // Operator ↔ workspace off-platform settle (record-only — Altaer
   // doesn't move money).
   | 'workspace.operator_fleet_balance.recorded'
-  // Operator ↔ driver fleet-driver settle (record-only). Delivered to
-  // the operator's own workspace so own-fleet integrations see driver payouts.
-  | 'workspace.fleet_driver_balance.settled'
-  | 'workspace.fleet_driver_balance.reversed'
   | 'fleet.created'
   | 'fleet.deleted'
   | 'fleet.driver.added'
@@ -324,17 +325,6 @@ export type AltaerFleetCommissionReversedPayload = Schemas['AltaerFleetCommissio
  *  move money). Either side can record; `initiatedBy` distinguishes. */
 export type OperatorFleetBalanceRecordedPayload = Schemas['OperatorFleetBalanceRecordedPayload'];
 
-// ── Operator ↔ fleet driver settle (off-platform payout / COD collect) ──
-
-/** Operator settled one of their fleet drivers off-platform.
- *  Record-only — Altaer doesn't move the money. `direction` is
- *  operator's POV (`paid_to` = payout; `collected_from` = COD collected). */
-export type FleetDriverBalanceSettledPayload = Schemas['FleetDriverBalanceSettledPayload'];
-
-/** Reversal of a prior fleet-driver settle. Rare — driver settles are
- *  typically cash. Join the forward via `originalSettlementId`. */
-export type FleetDriverBalanceReversedPayload = Schemas['FleetDriverBalanceReversedPayload'];
-
 // Fleet / driver / KYC payloads — extracted from their respective
 // envelopes' `data` shape so partners can annotate variables against
 // the same types the SDK passes to their handlers.
@@ -372,8 +362,6 @@ export type WebhookEvent =
       'workspace.operator_fleet_balance.recorded',
       OperatorFleetBalanceRecordedPayload
     >
-  | WebhookEnvelope<'workspace.fleet_driver_balance.settled', FleetDriverBalanceSettledPayload>
-  | WebhookEnvelope<'workspace.fleet_driver_balance.reversed', FleetDriverBalanceReversedPayload>
   | WebhookEnvelope<'fleet.created', FleetCreatedPayload>
   | WebhookEnvelope<'fleet.deleted', FleetDeletedPayload>
   | WebhookEnvelope<'fleet.driver.added', FleetDriverAddedPayload>

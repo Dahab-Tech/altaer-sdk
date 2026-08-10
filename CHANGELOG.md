@@ -2,6 +2,74 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.51] — 2026-08-10
+
+One vocabulary across the entire money wire: **`flow: LedgerFlow`** replaces `direction` and the grouped `amount: { value, direction }` on every tenant-visible surface. `LedgerFlow` is an 8-value cash-direction party-pair enum shared by ledger entries, settlements, and every settle webhook. Also removes the driver-settle tenant webhooks — driver payouts are informational to the workspace and already surface via the `workspace.operator_fleet_balance.recorded` (Card C) event when the operator hands the cash back.
+
+### Added
+
+- **`LedgerFlow` enum** (`shared/types/ledgerTypes`, exported from SDK root):
+  ```ts
+  export type LedgerFlow =
+    | 'workspace_to_platform'
+    | 'platform_to_workspace'
+    | 'operator_to_platform'
+    | 'platform_to_operator'
+    | 'operator_to_workspace'
+    | 'workspace_to_operator'
+    | 'driver_to_operator'
+    | 'operator_to_driver';
+  ```
+  Reads as `fromParty_to_toParty` in real cash direction — `fromParty` gave money, `toParty` received. Tenant filters: `flow.startsWith('workspace_to_')` = you paid out; `flow.endsWith('_to_workspace')` = you received. `driver_*` flows only appear on the ledger stream for own-fleet workspaces (their operator paying / collecting with their own driver).
+
+### Breaking
+
+- **`Settlement.flow` replaces `Settlement.direction`.** Old `direction: 'collected_from' | 'paid_to'` (Altaer-centric verb) → new `flow: LedgerFlow` (cash-direction party pair). Same event, no math change — the field just names both parties instead of one implicit subject.
+
+  ```ts
+  // Before (0.0.50):
+  for (const s of page.items) console.log(s.id, s.direction, s.amount);
+  // After (0.0.51):
+  for (const s of page.items) console.log(s.id, s.flow, s.amount);
+  ```
+
+- **`LedgerEntry.amount` is now a flat integer + a new `flow` field.** Previous grouped `amount: { value: number, direction: 'in' | 'out' }` is gone — `direction: 'in' | 'out'` was workspace-POV signed and misread on rows where the workspace wasn't a direct party (own-fleet operator↔driver legs). New wire ships an unsigned magnitude and lets the reader derive sign from `flow`:
+
+  ```ts
+  // Before (0.0.50):
+  const signed =
+    row.amount.direction === 'out' ? row.amount.value : -row.amount.value;
+  // After (0.0.51):
+  const signed = row.flow.endsWith('_to_workspace')
+    ? row.amount
+    : row.flow.startsWith('workspace_to_')
+      ? -row.amount
+      : 0;
+  ```
+
+- **Settle webhook payloads: `flow` replaces `direction`** on all five surviving settle events:
+
+  - `workspace.altaer_balance.settled` / `.reversed`
+  - `workspace.altaer_fleet_commission.settled` / `.reversed`
+  - `workspace.operator_fleet_balance.recorded`
+
+  ```ts
+  // Before:
+  if (event.data.direction === 'collected_from') {
+    /* you paid */
+  }
+  // After:
+  if (event.data.flow === 'workspace_to_platform') {
+    /* you paid */
+  }
+  ```
+
+### Removed
+
+- **Driver-settle webhook events removed.** `workspace.fleet_driver_balance.settled` and `workspace.fleet_driver_balance.reversed` no longer fire. Own-fleet workspaces that mirrored operator↔driver activity from the webhook should switch to `workspace.operator_fleet_balance.recorded` (Card C — the operator↔workspace hand-off, which is what actually moves the workspace's books). Dropped types: `FleetDriverBalanceSettledPayload`, `FleetDriverBalanceReversedPayload`, `FleetDriverProviderWire`, `FleetDriverAmountsWire`, `WebhookEnvelopeFleetDriverBalanceSettled`, `WebhookEnvelopeFleetDriverBalanceReversed`.
+- **`SettlementDirection`** removed from the tenant wire (still used internally by the DB layer). SDK no longer re-exports it.
+- **`LedgerEntryAmount` schema** removed (the grouped `{ value, direction }` shape is gone).
+
 ## [0.0.50] — 2026-08-08
 
 Rename: the workspace-cancel outcome segment in `LedgerEntryType` is now `workspace_canceled_post_pickup` (was `workspace_canceled_post_dispatch`). Semantics are unchanged — these legs only ever fire when the workspace cancels after pickup (pre-pickup cancels write no ledger rows); the name now states the real gate and matches the order-level `workspace_cancel_post_pickup` outcome.
