@@ -1082,6 +1082,16 @@ export interface components {
                 } | null;
             } | null;
             /**
+             * @description Proof-of-delivery photo the driver took at dropoff. Optional
+             *     evidence framed on the package where left (never the customer).
+             *     Null until uploaded. `url` is a short-lived signed URL — refetch
+             *     the order or handle the next `order.*` webhook to refresh.
+             */
+            deliveryPhoto: {
+                url: string;
+                version: string;
+            } | null;
+            /**
              * @description Public live-map share link. Inert 24h after terminal.
              *     `token` is the raw share secret behind `url` — the tracking
              *     socket needs it for auth (URL for humans, token for

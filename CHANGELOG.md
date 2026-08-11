@@ -2,6 +2,18 @@
 
 All notable changes to `@dahab-tech/altaer-sdk` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.52] — 2026-08-11
+
+Optional proof-of-delivery photo on orders. Drivers can attach a photo at dropoff (framed on the package where left); the URL flows through every `order.*` webhook, `GET /orders/{id}`, and `GET /orders` list.
+
+### Added
+
+- **`Order.deliveryPhoto`** — new nullable block on the tenant `Order` shape:
+  ```ts
+  deliveryPhoto: { url: string; version: string } | null;
+  ```
+  `null` until the driver uploads. `url` is a short-lived signed URL — refetch the order (or handle the next `order.*` webhook) to refresh. `version` is a nonce for cache-busting; bumped on every re-upload.
+
 ## [0.0.51] — 2026-08-10
 
 One vocabulary across the entire money wire: **`flow: LedgerFlow`** replaces `direction` and the grouped `amount: { value, direction }` on every tenant-visible surface. `LedgerFlow` is an 8-value cash-direction party-pair enum shared by ledger entries, settlements, and every settle webhook. Also removes the driver-settle tenant webhooks — driver payouts are informational to the workspace and already surface via the `workspace.operator_fleet_balance.recorded` (Card C) event when the operator hands the cash back.
